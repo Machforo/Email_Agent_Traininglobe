@@ -14,7 +14,8 @@ import 'dotenv/config';
 const BASE = process.env.E2E_BASE ?? 'http://localhost:3000';
 const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'atharv.kumar@webisdom.com';
 const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe@123';
-const APP_PASSWORD = (process.env.TEST_APP_PASSWORD ?? 'pdlb kozz uvse dzrv').replace(/\s+/g, '');
+// Never hardcode a credential here — this file is committed. Set TEST_APP_PASSWORD.
+const APP_PASSWORD = (process.env.TEST_APP_PASSWORD ?? '').replace(/\s+/g, '');
 const SELF = ADMIN_EMAIL; // every test mail goes here and nowhere else
 const SKIP_SEND = process.env.SKIP_SEND === '1';
 
@@ -117,11 +118,15 @@ const cleanup: (() => Promise<void>)[] = [];
   });
   check('rejects a bad app password', badCreds.status === 400, badCreds.data?.error?.slice(0, 60));
 
-  const smtp = await call<{ ok: boolean }>('/api/auth/smtp', {
-    method: 'POST',
-    body: JSON.stringify({ email: SELF, appPassword: APP_PASSWORD, signature: 'Atharv Kumar\nTraininglobe' }),
-  });
-  check('accepts a verified app password', smtp.status === 200);
+  if (!APP_PASSWORD) {
+    skip('mailbox connection', 'set TEST_APP_PASSWORD to test the real mailbox');
+  } else {
+    const smtp = await call<{ ok: boolean }>('/api/auth/smtp', {
+      method: 'POST',
+      body: JSON.stringify({ email: SELF, appPassword: APP_PASSWORD, signature: 'Traininglobe' }),
+    });
+    check('accepts a verified app password', smtp.status === 200);
+  }
 
   const me = await call<{ user: { hasSmtp: boolean; smtpEmail: string } }>('/api/auth/me');
   check('mailbox shows connected', me.data.user.hasSmtp === true, me.data.user.smtpEmail);
