@@ -1,0 +1,55 @@
+# Render blueprint: the worker and the database.
+# The Next.js app itself is deployed separately to Vercel.
+#
+# Create these by pointing Render at this repo (New > Blueprint). Secrets marked
+# sync:false must be filled in on the Render dashboard — they are never committed.
+
+databases:
+  - name: outreach-db
+    databaseName: outreach
+    plan: basic-256mb
+    # Keep the database and the worker in the same region; every job is DB-bound.
+    region: singapore
+
+services:
+  - type: worker
+    name: outreach-worker
+    runtime: node
+    plan: starter
+    region: singapore
+    buildCommand: npm ci && npx prisma generate && npm run db:deploy
+    startCommand: npm run start:worker
+    # One instance only. Two workers would both claim due follow-ups and could
+    # double-send; the queue guards against it, but there is no reason to risk it.
+    numInstances: 1
+    envVars:
+      - key: APP_ROLE
+        value: worker
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: outreach-db
+          property: connectionString
+      # Must match the Vercel deployment's URL: the worker builds tracking pixels and
+      # unsubscribe links into every mail it sends.
+      - key: APP_URL
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: GROQ_API_KEYS
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: GROQ_SEARCH_MODEL
+        value: groq/compound-mini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-flash-latest
+      - key: WORKER_POLL_CRON
+        value: '*/5 * * * *'
+      - key: WORKER_FOLLOWUP_CRON
+        value: '*/10 * * * *'

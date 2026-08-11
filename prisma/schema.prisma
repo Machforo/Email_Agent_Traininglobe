@@ -1,0 +1,489 @@
+// Outreach Agent - data model
+//
+// Postgres. The app runs split across two hosts (Next.js on Vercel, worker on Render)
+// which must share one database, so a file-backed DB is not an option.
+//
+// Enums and Json are still modelled as String with documented value sets. That was
+// originally a SQLite constraint, but keeping it avoids a schema-wide rewrite and the
+// values are validated by zod at the API boundary anyway.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// role: ADMIN | MEMBER
+model User {
+  id           String  @id @default(cuid())
+  email        String  @unique
+  name         String
+  passwordHash String
+  role         String  @default("MEMBER")
+  active       Boolean @default(true)
+
+  // Sending identity. The Gmail app password is asked for after login and stored
+  // AES-256-GCM encrypted at rest (see src/lib/crypto.ts).
+  smtpEmail       String?
+  smtpPasswordEnc String?
+  smtpVerifiedAt  DateTime?
+  signature       String?
+
+  dailySendLimit Int    @default(150)
+  timezone       String @default("Asia/Kolkata")
+  // Business hours for sending, local to `timezone`
+  sendWindowStart Int   @default(9)
+  sendWindowEnd   Int   @default(19)
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  institutions  Institution[]
+  templates     Template[]
+  caseStudies   CaseStudy[]
+  sequences     Sequence[]
+  drafts        Draft[]
+  messages      EmailMessage[]
+  feedback      Feedback[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+  jobs          Job[]
+
+  @@index([role])
+}
+
+/// status: NEW | RESEARCHED | ACTIVE | ENGAGED | WON | LOST | BOUNCED | UNSUBSCRIBED
+model Institution {
+  id      String  @id @default(cuid())
+  name    String
+  website String?
+  city    String?
+  state   String?
+  country String  @default("India")
+  type    String? // University | College | School | Institute | EdTech | Other
+
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  /// Free-text notes from the team member: what they want the mail to focus on.
+  notes  String?
+  tags   String?
+  status String  @default("NEW")
+
+  /// JSON blob from the Research agent (gaps, reasons, solutions, signals, sources)
+  researchJson String?
+  researchedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts  Contact[]
+  sequences Sequence[]
+
+  @@index([ownerId, status])
+  @@index([name])
+}
+
+model Contact {
+  id            String      @id @default(cuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  name     String?
+  email    String
+  title    String?
+  linkedin String?
+  phone    String?
+
+  isPrimary Boolean @default(true)
+
+  /// Set by the Verification agent after a web cross-check
+  verified          Boolean   @default(false)
+  verifiedAt        DateTime?
+  verificationNotes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sequences Sequence[]
+
+  @@index([institutionId])
+  @@index([email])
+}
+
+/// stage: INITIAL | FOLLOWUP_1 | FOLLOWUP_2 | FOLLOWUP_3 | REPLY
+model Template {
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  name    String
+  stage   String
+  subject String
+  body    String
+  /// Guidance passed to the AI on tone/angle for this template
+  guidance String?
+
+  isShared Boolean @default(false)
+  isActive Boolean @default(true)
+  useCount Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId, stage])
+}
+
+model CaseStudy {
+  id      String @id @default(cuid())
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId String
+
+  title       String
+  description String?
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
+  isShared    Boolean @default(true)
+
+  /// The file itself lives in the database rather than on disk.
+  ///
+  /// Vercel's filesystem is ephemeral, and Render's persistent disk is not reachable
+  /// from Vercel — but both hosts already share this database, and the worker needs to
+  /// read these bytes to attach them to outgoing mail. Uploads are capped at 15MB, and
+  /// there are only a handful of them, so a bytea column is the right trade here.
+  data Bytes
+
+  createdAt DateTime @default(now())
+
+  @@index([ownerId])
+}
+
+/// One outreach thread with one contact at one institution.
+/// status: DRAFTING | PENDING_APPROVAL | ACTIVE | REPLIED | COMPLETED | STOPPED | BOUNCED
+model Sequence {
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  contactId     String
+  contact       Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  status       String @default("DRAFTING")
+  /// 0 = initial mail, 1..3 = follow-ups
+  currentStage Int    @default(0)
+  maxFollowUps Int    @default(3)
+  followUpDays Int    @default(3)
+
+  /// When the worker should next act (generate + queue the next follow-up)
+  nextActionAt DateTime?
+  /// Root RFC-822 Message-ID so replies thread correctly
+  rootMessageId String?
+  lastSubject   String?
+
+  stoppedReason String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  drafts    Draft[]
+  messages  EmailMessage[]
+  replies   Reply[]
+  agentRuns AgentRun[]
+
+  @@index([ownerId, status])
+  @@index([status, nextActionAt])
+}
+
+/// status: GENERATING | NEEDS_APPROVAL | APPROVED | REJECTED | SENT | FAILED
+/// kind:   OUTREACH | FOLLOWUP | REPLY
+model Draft {
+  id         String   @id @default(cuid())
+  sequenceId String
+  sequence   Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  ownerId    String
+  owner      User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  kind  String @default("OUTREACH")
+  stage Int    @default(0)
+
+  status String @default("GENERATING")
+
+  /// Current (possibly human-edited) content that will actually be sent
+  subject String @default("")
+  body    String @default("")
+
+  /// The untouched AI output, kept so we can diff human edits and learn from them
+  aiSubject String?
+  aiBody    String?
+
+  /// Pipeline artefacts
+  researchSummary  String?
+  verificationJson String?
+  confidence       Int     @default(0)
+  revisionCount    Int     @default(0)
+
+  templateId         String?
+  attachCaseStudyIds String? // comma-separated CaseStudy ids
+
+  /// Populated when the draft is a reply to an inbound mail
+  replyToMessageId String?
+
+  approvedAt   DateTime?
+  approvedById String?
+  rejectedNote String?
+  error        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agentRuns AgentRun[]
+
+  @@index([ownerId, status])
+  @@index([sequenceId])
+}
+
+/// Observability row for every LLM call in the cascade.
+/// agent: RESEARCH | COMPOSE | VERIFY | REVISE | FOLLOWUP | REPLY_ANALYZE | REPLY_DRAFT | INSIGHTS
+model AgentRun {
+  id String @id @default(cuid())
+
+  draftId    String?
+  draft      Draft?    @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  sequenceId String?
+  sequence   Sequence? @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  agent  String
+  model  String
+  status String @default("OK") // OK | ERROR
+
+  promptPreview String?
+  outputPreview String?
+  /// JSON array of source URLs the agent actually consulted
+  sources       String?
+
+  tokensIn  Int @default(0)
+  tokensOut Int @default(0)
+  latencyMs Int @default(0)
+
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([draftId])
+  @@index([agent, createdAt])
+}
+
+/// direction: OUT | IN
+/// status:    QUEUED | SENT | BOUNCED | FAILED
+model EmailMessage {
+  id         String   @id @default(cuid())
+  sequenceId String
+  sequence   Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  ownerId    String
+  owner      User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  direction String
+  stage     Int    @default(0)
+  status    String @default("QUEUED")
+
+  messageId  String? @unique
+  inReplyTo  String?
+  references String?
+
+  fromEmail String
+  toEmail   String
+  subject   String
+  bodyText  String
+  bodyHtml  String?
+
+  attachmentsJson String?
+
+  sentAt     DateTime?
+  receivedAt DateTime?
+
+  /// Open / click tracking
+  trackingId String?   @unique
+  openedAt   DateTime?
+  openCount  Int       @default(0)
+  firstClickAt DateTime?
+  clickCount Int       @default(0)
+
+  bounceType   String? // HARD | SOFT
+  bounceReason String?
+  error        String?
+
+  createdAt DateTime @default(now())
+
+  events  TrackingEvent[]
+  replies Reply[]
+
+  @@index([ownerId, direction, sentAt])
+  @@index([sequenceId])
+}
+
+/// sentiment: POSITIVE | NEUTRAL | NEGATIVE
+/// intent:    INTERESTED | MEETING_REQUEST | QUESTION | NOT_INTERESTED | OUT_OF_OFFICE | UNSUBSCRIBE | REFERRAL | OTHER
+model Reply {
+  id         String   @id @default(cuid())
+  sequenceId String
+  sequence   Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  emailMessageId String
+  emailMessage   EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  summary         String
+  keyPoints       String? // JSON array
+  sentiment       String  @default("NEUTRAL")
+  intent          String  @default("OTHER")
+  suggestedAction String?
+  urgency         String  @default("NORMAL") // LOW | NORMAL | HIGH
+
+  handled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([sequenceId])
+}
+
+/// The "agent feedback memory". Every human edit of an AI draft, plus explicit notes,
+/// is stored here and injected into later prompts so the agents stop repeating mistakes.
+/// type: EDIT | NOTE | REJECTION
+model Feedback {
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  draftId String?
+  agent   String  @default("COMPOSE")
+  type    String  @default("EDIT")
+
+  /// For EDIT: what the AI wrote vs what the human changed it to
+  originalText String?
+  editedText   String?
+  /// Distilled, reusable lesson ("don't open with 'I hope this finds you well'")
+  lesson       String?
+  note         String?
+
+  /// Scope: applies to this user only, or team-wide (admin-authored)
+  global Boolean @default(false)
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@index([ownerId, active])
+}
+
+/// type: OPEN | CLICK
+model TrackingEvent {
+  id             String       @id @default(cuid())
+  emailMessageId String
+  emailMessage   EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  type      String
+  url       String?
+  userAgent String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([emailMessageId, type])
+}
+
+model Suppression {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  reason    String // UNSUBSCRIBE | HARD_BOUNCE | MANUAL | COMPLAINT
+  note      String?
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    String // REPLY_RECEIVED | DRAFT_READY | BOUNCE | FOLLOWUP_READY | SYSTEM
+  title   String
+  body    String?
+  link    String?
+  read    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+}
+
+model AuditLog {
+  id     String  @id @default(cuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action   String
+  entity   String?
+  entityId String?
+  meta     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// Single-row table for system-wide settings the admin can tune.
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+/// Background work queue.
+///
+/// Everything slow or outward-facing runs here rather than inside an HTTP request:
+/// the agent cascade takes 90-355 seconds, which no serverless platform will hold open,
+/// and sending mail from a request handler makes retries dangerous. The web app only
+/// ever enqueues and polls; the worker on Render is the sole executor.
+///
+/// type:   GENERATE_DRAFT | GENERATE_FOLLOWUP | SEND_DRAFT | PROCESS_REPLY
+/// status: QUEUED | RUNNING | DONE | FAILED
+model Job {
+  id String @id @default(cuid())
+
+  type   String
+  status String @default("QUEUED")
+
+  /// JSON arguments for the handler.
+  payload String
+  /// JSON result, so the UI can navigate straight to what was produced.
+  result  String?
+  error   String?
+
+  attempts    Int @default(0)
+  maxAttempts Int @default(3)
+
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  /// Denormalised so the UI can find in-flight work for a row without scanning payloads.
+  sequenceId String?
+  draftId    String?
+
+  /// Delay and backoff: the claimer ignores anything scheduled in the future.
+  runAfter DateTime @default(now())
+
+  /// Set when a worker claims the job. Stale locks are reclaimed after a timeout so a
+  /// worker that dies mid-job does not strand it forever.
+  lockedAt DateTime?
+  lockedBy String?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, runAfter])
+  @@index([ownerId, status])
+  @@index([sequenceId])
+}
