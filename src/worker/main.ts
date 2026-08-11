@@ -15,8 +15,13 @@ import { drainQueue } from './runner';
 
 const POLL_CRON = process.env.WORKER_POLL_CRON ?? '*/5 * * * *';
 const FOLLOWUP_CRON = process.env.WORKER_FOLLOWUP_CRON ?? '*/10 * * * *';
-/** How often to look for queued work. Kept short — users are watching a spinner. */
+/** How often to look for queued work while busy. Short — users watch a spinner. */
 const QUEUE_INTERVAL_MS = Number(process.env.WORKER_QUEUE_INTERVAL_MS ?? 3_000);
+/**
+ * Ceiling once the queue has been empty for a while. 30s is the worst case a user
+ * waits before their job is picked up, which is invisible next to a 2-6 minute job.
+ */
+const QUEUE_MAX_INTERVAL_MS = Number(process.env.WORKER_QUEUE_MAX_INTERVAL_MS ?? 30_000);
 
 let draining = false;
 
@@ -73,25 +78,45 @@ async function main() {
    * The queue loop is separate from the cron guard on purpose. Draft generation takes
    * minutes, and a user is sitting in front of a spinner waiting for it — it must not
    * be blocked behind an inbox poll, nor block one.
+   *
+   * It also backs off when there is nothing to do. A fixed 3-second poll means ~28,000
+   * queries a day against an idle queue, which on a serverless Postgres (Neon's free
+   * tier, for instance) keeps compute permanently awake and burns the monthly
+   * allowance for no benefit. Busy stays responsive; idle goes quiet.
    */
-  setInterval(() => {
-    if (draining) return;
+  let idleDelay = QUEUE_INTERVAL_MS;
+
+  const loop = async () => {
+    if (draining) return schedule(idleDelay);
     draining = true;
-    void drainQueue()
-      .then((r) => {
-        if (r.processed || r.failed) {
-          log(`queue: ${r.processed} done, ${r.failed} failed`);
-        }
-      })
-      .catch((err) => log('queue error:', err))
-      .finally(() => {
-        draining = false;
-      });
-  }, QUEUE_INTERVAL_MS);
+    try {
+      const before = idleDelay;
+      const r = await drainQueue();
+      if (r.processed || r.failed) {
+        log(`queue: ${r.processed} done, ${r.failed} failed`);
+        idleDelay = QUEUE_INTERVAL_MS; // work is arriving — stay responsive
+      } else {
+        idleDelay = Math.min(idleDelay * 2, QUEUE_MAX_INTERVAL_MS);
+      }
+      if (idleDelay !== before) log(`queue poll interval ${before}ms → ${idleDelay}ms`);
+    } catch (err) {
+      log('queue error:', err);
+      idleDelay = Math.min(idleDelay * 2, QUEUE_MAX_INTERVAL_MS);
+    } finally {
+      draining = false;
+      schedule(idleDelay);
+    }
+  };
+
+  const schedule = (ms: number) => {
+    setTimeout(() => void loop(), ms);
+  };
+
+  schedule(0);
 
   log(
-    `queue every ${QUEUE_INTERVAL_MS / 1000}s | inbox poll "${POLL_CRON}" | ` +
-      `follow-ups "${FOLLOWUP_CRON}" | housekeeping hourly`,
+    `queue ${QUEUE_INTERVAL_MS / 1000}s→${QUEUE_MAX_INTERVAL_MS / 1000}s (backs off when idle) | ` +
+      `inbox poll "${POLL_CRON}" | follow-ups "${FOLLOWUP_CRON}" | housekeeping hourly`,
   );
 
   // Do one pass at startup so a restart doesn't leave overdue work sitting.

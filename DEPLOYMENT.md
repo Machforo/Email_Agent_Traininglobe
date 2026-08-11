@@ -1,4 +1,115 @@
-# Going live — Vercel + Render
+# Deploying
+
+- **Just want the team to try it, without paying?** → [Testing for free](#testing-for-free)
+- **Ready to run it properly, 24/7?** → [The paid setup](#the-paid-setup--vercel--render)
+
+---
+
+# Testing for free
+
+**Render has no free background worker** — the cheapest is $7/month, so a Blueprint will
+always ask for payment ([Render pricing](https://render.com/pricing)). You do not need
+Render to test. The worker is just a Node process; run it on your own machine and
+everything else can be free.
+
+Two routes. Both cost nothing and neither needs a card.
+
+## Route A — nothing to sign up for (10 minutes)
+
+Everything runs on your machine; the team reaches it over a free HTTPS tunnel.
+
+```bash
+winget install --id Cloudflare.cloudflared
+```
+
+Four terminals:
+
+```bash
+npm run pg
+```
+
+```bash
+npm run worker
+```
+
+```bash
+npm run dev
+```
+
+```bash
+cloudflared tunnel --url http://localhost:3000
+```
+
+It prints a URL like `https://random-words.trycloudflare.com`. Put that in `.env` as
+`APP_URL`, restart `npm run dev` and `npm run worker`, and send the URL to the team.
+
+**Limits, so nothing surprises you:** the URL changes each time you restart the tunnel,
+which kills tracking links in already-sent mail. Your machine sleeping takes it down.
+Fine for a week of trying it out; not where you land.
+
+## Route B — free hosted app, worker on your machine
+
+Better if you want a stable URL the team can bookmark. The app is properly hosted and
+always up; only the worker depends on your laptop.
+
+| Piece | Where | Cost |
+|---|---|---|
+| Postgres | [Neon](https://neon.com/pricing) free tier | ₹0, no card |
+| Next.js app | Vercel Hobby | ₹0, no card |
+| Worker | your machine | ₹0 |
+
+**1. Database.** Sign up at neon.com, create a project, copy the connection string
+(the **pooled** one). Free tier: 0.5 GB, 100 compute-hours/month, no card.
+
+**2. Create the schema.** Locally, with `DATABASE_URL` set to that Neon string:
+
+```bash
+npx prisma migrate deploy && npm run db:seed
+```
+
+**3. App on Vercel.** Import the GitHub repo at vercel.com/new. Add these environment
+variables:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | the Neon pooled connection string |
+| `AUTH_SECRET` | generate it (see below) |
+| `ENCRYPTION_KEY` | generate it (see below) |
+| `GROQ_API_KEYS` | your keys, comma-separated |
+| `GEMINI_API_KEY` | your key |
+| `APP_URL` | your `https://….vercel.app` URL, after the first deploy |
+
+**4. Worker, on your machine.** Point it at the same Neon database — put the same
+`DATABASE_URL` and `APP_URL` in your local `.env`, then:
+
+```bash
+npm run worker
+```
+
+The team can now use the Vercel URL from anywhere. Drafts only get processed while your
+worker is running; anything queued while it is off is picked up as soon as you start it
+again — nothing is lost.
+
+### Two things to know about the free tiers
+
+**Neon's 100 compute-hours.** The worker keeps the database awake while it runs. Leaving
+it on 24/7 works out to roughly 180 compute-hours a month, which exceeds the free
+allowance and suspends the database until the next cycle. Running it during working
+hours (~8h/day) lands around 40 — comfortably inside. The queue backs off to a 30-second
+poll when idle specifically so this stays cheap.
+
+**Vercel Hobby forbids commercial use.** For evaluating the tool it is fine. Once this is
+doing real company work you need Pro (~$20/month), or move the app to Render too.
+
+### When to stop doing this
+
+Move to the paid setup when you want follow-ups and reply detection to keep running
+overnight and at weekends without your laptop. That is the only thing you are buying:
+**$13/month** for a worker that never sleeps.
+
+---
+
+# The paid setup — Vercel + Render
 
 ```
 ┌─────────────────────┐         ┌──────────────────────┐
