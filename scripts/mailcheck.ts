@@ -2,8 +2,19 @@ import 'dotenv/config';
 import { ImapFlow } from 'imapflow';
 import { verifyCredentials } from '../src/lib/email/smtp';
 
-const EMAIL = process.argv[2] ?? 'atharv.kumar@webisdom.com';
-const PASS = (process.argv[3] ?? 'pdlb kozz uvse dzrv').replace(/\s+/g, '');
+// Never hardcode a credential here — this file is committed.
+//   npm run mailcheck -- you@example.com "xxxx xxxx xxxx xxxx"
+// or set MAILCHECK_EMAIL / MAILCHECK_APP_PASSWORD.
+const EMAIL = process.argv[2] ?? process.env.MAILCHECK_EMAIL ?? '';
+const PASS = (process.argv[3] ?? process.env.MAILCHECK_APP_PASSWORD ?? '').replace(/\s+/g, '');
+
+if (!EMAIL || !PASS) {
+  console.error(
+    'Usage: npm run mailcheck -- <gmail-address> "<app password>"\n' +
+      '   or: set MAILCHECK_EMAIL and MAILCHECK_APP_PASSWORD',
+  );
+  process.exit(1);
+}
 
 (async () => {
   console.log(`Checking ${EMAIL} ...`);
