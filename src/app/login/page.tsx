@@ -6,6 +6,12 @@ import { Suspense, useState } from 'react';
 import { Alert, Button, Field, Input, Spinner } from '@/components/ui';
 import { api, errorMessage } from '@/lib/client';
 
+/** Only same-origin relative paths — blocks //evil.com open redirects. */
+function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/';
+  return raw;
+}
+
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
