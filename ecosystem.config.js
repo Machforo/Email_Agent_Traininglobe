@@ -8,6 +8,8 @@
  * Two processes, deliberately: the web app is request-scoped and can be restarted at
  * will, while the worker holds cron timers and IMAP connections.
  */
+require('dotenv').config();
+
 module.exports = {
   apps: [
     {

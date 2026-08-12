@@ -51,3 +51,6 @@ next-env.d.ts
 /src/generated
 
 /.pgdata
+
+# DB dump for EC2 transfer — contains password hashes + encrypted mailbox secrets
+/prisma/seed-data.json

@@ -1,6 +1,9 @@
 import { prisma } from '../lib/db';
 import { pollAllMailboxes } from '../lib/email/imap';
 import { enqueue } from '../lib/jobs/queue';
+import { isWithinSendWindow } from '../lib/send-window';
+
+export { isWithinSendWindow };
 
 /**
  * Scheduled work: chase the follow-ups that are due, and look for replies.
@@ -75,7 +78,14 @@ export async function runFollowUps(): Promise<JobResult> {
         continue;
       }
 
-      if (!isWithinSendWindow(seq.owner.sendWindowStart, seq.owner.sendWindowEnd)) {
+      if (
+        !isWithinSendWindow(
+          seq.owner.sendWindowStart,
+          seq.owner.sendWindowEnd,
+          new Date(),
+          seq.owner.timezone,
+        )
+      ) {
         continue; // try again on a later tick, inside business hours
       }
 
@@ -145,15 +155,4 @@ export async function runHousekeeping(): Promise<JobResult> {
     result.errors.push(err instanceof Error ? err.message : String(err));
   }
   return result;
-}
-
-/**
- * Business-hours guard. Mail sent at 3am reads as automated, and Gmail is more
- * likely to treat a burst outside working hours as spam.
- */
-export function isWithinSendWindow(startHour: number, endHour: number, now = new Date()): boolean {
-  const hour = now.getHours();
-  const day = now.getDay();
-  if (day === 0 || day === 6) return false; // skip weekends
-  return hour >= startHour && hour < endHour;
 }
