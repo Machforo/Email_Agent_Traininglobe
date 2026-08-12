@@ -12,6 +12,20 @@ import { AuthError } from './errors';
 export const SESSION_COOKIE = 'oa_session';
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
+/**
+ * Secure cookies only when the public app URL is HTTPS.
+ *
+ * Tying this to NODE_ENV===production broke EC2 / IP deploys on plain HTTP: the
+ * browser refused to store the Secure cookie, so login returned 200 then the next
+ * navigation had no session and bounced straight back to /login.
+ */
+function cookieSecure(): boolean {
+  const appUrl = process.env.APP_URL ?? '';
+  if (appUrl.startsWith('https://')) return true;
+  if (appUrl.startsWith('http://')) return false;
+  return process.env.NODE_ENV === 'production';
+}
+
 export type SessionPayload = {
   uid: string;
   email: string;
@@ -38,7 +52,7 @@ export async function setSessionCookie(token: string) {
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: cookieSecure(),
     path: '/',
     maxAge: MAX_AGE_SECONDS,
   });

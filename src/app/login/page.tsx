@@ -6,6 +6,12 @@ import { Suspense, useState } from 'react';
 import { Alert, Button, Field, Input, Spinner } from '@/components/ui';
 import { api, errorMessage } from '@/lib/client';
 
+/** Only same-origin relative paths — blocks //evil.com open redirects. */
+function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/';
+  return raw;
+}
+
 function LoginForm() {
   const params = useSearchParams();
   const [email, setEmail] = useState('');
@@ -20,7 +26,7 @@ function LoginForm() {
     try {
       await api.post('/api/auth/login', { email, password });
       // Full reload so the server layout picks up the new session cookie.
-      window.location.href = params.get('next') || '/';
+      window.location.assign(safeNext(params.get('next')));
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
