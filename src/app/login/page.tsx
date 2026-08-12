@@ -1,12 +1,13 @@
 'use client';
 
 import { Mail, Lock, ArrowRight } from 'lucide-react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { Alert, Button, Field, Input, Spinner } from '@/components/ui';
 import { api, errorMessage } from '@/lib/client';
 
 function LoginForm() {
+  const router = useRouter();
   const params = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,8 +20,12 @@ function LoginForm() {
     setError(null);
     try {
       await api.post('/api/auth/login', { email, password });
-      // Full reload so the server layout picks up the new session cookie.
-      window.location.href = params.get('next') || '/';
+      let nextUrl = params.get('next');
+      if (!nextUrl || !nextUrl.startsWith('/') || nextUrl.startsWith('//')) {
+        nextUrl = '/';
+      }
+      router.push(nextUrl);
+      router.refresh();
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
