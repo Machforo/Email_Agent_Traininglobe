@@ -32,7 +32,7 @@ yarn-error.log*
 
 # env files — every real one stays out; the template is committed on purpose
 .env*
-!.env.example
+.env.example
 
 # vercel
 .vercel
