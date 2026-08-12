@@ -426,7 +426,7 @@ const cleanup: (() => Promise<void>)[] = [];
   /* ------------------------------------------------------------ 16. PAGES */
   section('16. Pages render');
 
-  for (const p of ['/', '/prospects', '/approvals', '/sequences', '/inbox', '/templates', '/case-studies', '/analytics', '/admin', '/settings']) {
+  for (const p of ['/dashboard', '/prospects', '/approvals', '/sequences', '/inbox', '/templates', '/case-studies', '/analytics', '/admin', '/settings']) {
     const r = await fetch(`${BASE}${p}`, { headers: { Cookie: cookie }, redirect: 'manual' });
     const html = await r.text();
     check(`${p}`, r.status === 200 && !/Application error/i.test(html), `${(html.length / 1024).toFixed(0)}kb`);
