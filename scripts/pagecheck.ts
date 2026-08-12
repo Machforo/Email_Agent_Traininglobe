@@ -7,7 +7,7 @@ const EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'atharv.kumar@webisdom.com';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe@123';
 
 const PAGES = [
-  '/',
+  '/dashboard',
   '/prospects',
   '/approvals',
   '/sequences',

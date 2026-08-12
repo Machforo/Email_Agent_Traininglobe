@@ -13,13 +13,13 @@ export function middleware(req: NextRequest) {
   const hasSession = Boolean(req.cookies.get(SESSION_COOKIE)?.value);
 
   if (pathname === '/login') {
-    if (hasSession) return NextResponse.redirect(new URL('/', req.url));
+    if (hasSession) return NextResponse.redirect(new URL('/dashboard', req.url));
     return NextResponse.next();
   }
 
   if (!hasSession) {
     const url = new URL('/login', req.url);
-    if (pathname !== '/') url.searchParams.set('next', pathname);
+    if (pathname !== '/' && pathname !== '/dashboard') url.searchParams.set('next', pathname);
     return NextResponse.redirect(url);
   }
 

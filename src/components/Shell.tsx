@@ -37,7 +37,7 @@ export type SessionUser = {
 };
 
 const NAV = [
-  { href: '/', label: 'Overview', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/prospects', label: 'Prospects', icon: Building2 },
   { href: '/approvals', label: 'Approvals', icon: CheckCircle2, badge: 'approvals' },
   { href: '/sequences', label: 'Sequences', icon: Workflow },
@@ -157,7 +157,7 @@ export function Shell({ user, children }: { user: SessionUser; children: React.R
           {nav.map(({ href, label, icon: Icon, ...rest }) => {
             const badgeKey = (rest as { badge?: string }).badge;
             const count = badgeKey ? counts[badgeKey as keyof typeof counts] : 0;
-            const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
+            const active = pathname === href || pathname.startsWith(`${href}/`);
             return (
               <Link
                 key={href}
