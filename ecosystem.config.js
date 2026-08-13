@@ -3,34 +3,35 @@
  *
  *   pm2 start ecosystem.config.js
  *   pm2 save && pm2 startup     # survive reboots
- *   pm2 logs                    # tail both processes
+ *   pm2 logs outreach-worker    # AI jobs live here, not in the web process
  *
  * Two processes, deliberately: the web app is request-scoped and can be restarted at
- * will, while the worker holds cron timers and IMAP connections.
+ * will, while the worker holds cron timers, IMAP, and every Groq/Gemini call.
  */
-require('dotenv').config();
+const path = require('path');
+const root = __dirname;
+require('dotenv').config({ path: path.join(root, '.env') });
 
 module.exports = {
   apps: [
     {
       name: 'outreach-web',
-      script: 'node_modules/next/dist/bin/next',
-      args: 'start -p 3000',
+      cwd: root,
+      script: path.join(root, 'node_modules/next/dist/bin/next'),
+      args: 'start -H 0.0.0.0 -p 3000',
       env: { NODE_ENV: 'production', PORT: '3000' },
       max_memory_restart: '600M',
       autorestart: true,
     },
     {
       name: 'outreach-worker',
-      script: 'node_modules/tsx/dist/cli.mjs',
-      args: 'src/worker/index.ts',
-      env: { NODE_ENV: 'production' },
+      cwd: root,
+      script: path.join(root, 'src/worker/index.ts'),
+      interpreter: path.join(root, 'node_modules/.bin/tsx'),
+      env: { NODE_ENV: 'production', APP_ROLE: 'worker' },
       max_memory_restart: '400M',
       autorestart: true,
-      // A crash loop here usually means bad credentials or no network; back off
-      // rather than hammering Gmail.
       restart_delay: 10_000,
-      // Only one worker, ever. Two would double-send follow-ups.
       instances: 1,
     },
   ],

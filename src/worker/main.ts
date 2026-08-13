@@ -1,6 +1,7 @@
-import 'dotenv/config';
 import cron from 'node-cron';
 import { prisma } from '../lib/db';
+import { WORKER_HEARTBEAT_KEY } from '../lib/env';
+import { setSetting } from '../lib/settings';
 import { runFollowUps, runHousekeeping, runInboxPoll, type JobResult } from './jobs';
 import { drainQueue } from './runner';
 
@@ -63,8 +64,17 @@ async function guarded(name: string, fn: () => Promise<JobResult>) {
   }
 }
 
+async function beat() {
+  try {
+    await setSetting(WORKER_HEARTBEAT_KEY, new Date().toISOString());
+  } catch (err) {
+    log('heartbeat failed', err);
+  }
+}
+
 async function main() {
   log('starting');
+  await beat();
 
   const users = await prisma.user.count();
   const withCreds = await prisma.user.count({ where: { smtpPasswordEnc: { not: null } } });
@@ -104,6 +114,7 @@ async function main() {
       idleDelay = Math.min(idleDelay * 2, QUEUE_MAX_INTERVAL_MS);
     } finally {
       draining = false;
+      await beat();
       schedule(idleDelay);
     }
   };
@@ -140,11 +151,13 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('uncaughtException', (err) => {
   log('uncaught exception (worker continues):', err);
   inFlight.clear();
+  draining = false;
 });
 
 process.on('unhandledRejection', (reason) => {
   log('unhandled rejection (worker continues):', reason);
   inFlight.clear();
+  draining = false;
 });
 
 main().catch(async (err) => {

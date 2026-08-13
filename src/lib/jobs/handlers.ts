@@ -44,6 +44,17 @@ async function handleGenerate(job: Job) {
     return { draftId: existing.id, reused: true };
   }
 
+  // A crashed worker leaves GENERATING drafts forever. Reclaiming the job would
+  // otherwise create a second draft for the same stage.
+  await prisma.draft.updateMany({
+    where: {
+      sequenceId: payload.sequenceId,
+      stage: payload.stage,
+      status: 'GENERATING',
+    },
+    data: { status: 'FAILED', error: 'Worker restarted before generation finished; retrying' },
+  });
+
   const draft = await generateDraftForSequence(payload.sequenceId, payload.stage, {
     templateId: payload.templateId ?? null,
     caseStudyIds: payload.caseStudyIds,
@@ -124,6 +135,9 @@ async function handleSend(job: Job) {
     // A permanent refusal (no credentials, suppressed address, daily cap) will fail
     // identically on every retry, so stop immediately and tell the owner.
     if (err instanceof SendError) {
+      if (err.code === 'ALREADY_SENT') {
+        return { alreadySent: true, draftId: draft.id };
+      }
       await prisma.draft.update({
         where: { id: draft.id },
         data: { status: 'NEEDS_APPROVAL', error: err.message.slice(0, 800) },
