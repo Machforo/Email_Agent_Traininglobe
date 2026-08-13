@@ -1,7 +1,40 @@
 # Deploying
 
+- **EC2 (one machine, web + worker)?** → [EC2](#ec2--one-machine)
 - **Just want the team to try it, without paying?** → [Testing for free](#testing-for-free)
-- **Ready to run it properly, 24/7?** → [The paid setup](#the-paid-setup--vercel--render)
+- **Ready to run it properly, 24/7 on Vercel + Render?** → [The paid setup](#the-paid-setup--vercel--render)
+
+---
+
+# EC2 — one machine
+
+Node **22** (see `.nvmrc`). Postgres on the box or RDS. Both processes must run or AI drafts never finish.
+
+```bash
+git pull
+npm ci
+cp -n .env.example .env   # then edit
+# Required: DATABASE_URL, AUTH_SECRET, ENCRYPTION_KEY, GROQ_API_KEYS,
+# APP_URL=http://YOUR_PUBLIC_IP   (or https://your.domain — must match the browser)
+npm run db:seed           # first time only
+npm run build
+npm i -g pm2
+npm run ec2:check
+npm run ec2:start
+pm2 startup               # once, so it survives reboot
+```
+
+Check:
+
+```bash
+curl -s http://127.0.0.1:3000/api/health
+# {"ok":true,"db":"up","worker":"up",...}
+
+pm2 logs outreach-worker
+# [worker] env loaded from ... | groq keys: N
+```
+
+Open `http://YOUR_IP/dashboard` after login (or `/login`). Nginx should proxy `/` to `127.0.0.1:3000`. If `worker` is `"down"`, drafts stay on “Waiting for the worker”.
 
 ---
 

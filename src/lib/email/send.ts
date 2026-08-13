@@ -32,7 +32,20 @@ export async function sendDraft(draftId: string): Promise<{ messageId: string; e
   });
 
   if (draft.status === 'SENT') {
-    throw new SendError('This draft has already been sent.', 'ALREADY_SENT');
+    const existing = await prisma.emailMessage.findFirst({
+      where: {
+        sequenceId: draft.sequenceId,
+        stage: draft.stage,
+        direction: 'OUT',
+        status: 'SENT',
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existing) return { messageId: existing.messageId ?? '', emailId: existing.id };
+    throw new SendError(
+      'This draft was already handed to SMTP. The outbound record is missing — do not send again.',
+      'ALREADY_SENT',
+    );
   }
 
   const { owner, sequence } = draft;
@@ -128,6 +141,13 @@ export async function sendDraft(draftId: string): Promise<{ messageId: string; e
     throw new SendError(message);
   }
 
+  // Mark SENT before writing the outbound row. If we die after SMTP but before
+  // EmailMessage is created, a retry must not send again.
+  await prisma.draft.update({
+    where: { id: draft.id },
+    data: { status: 'SENT', subject },
+  });
+
   const email = await prisma.emailMessage.create({
     data: {
       sequenceId: sequence.id,
@@ -149,11 +169,6 @@ export async function sendDraft(draftId: string): Promise<{ messageId: string; e
       sentAt: new Date(),
       trackingId,
     },
-  });
-
-  await prisma.draft.update({
-    where: { id: draft.id },
-    data: { status: 'SENT', subject },
   });
 
   // Advance the sequence: schedule the next follow-up, or close it out.
