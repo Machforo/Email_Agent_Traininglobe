@@ -30,8 +30,7 @@ export function handler<Args extends unknown[]>(
         });
       }
       console.error('[api]', err);
-      const message = err instanceof Error ? err.message : 'Internal server error';
-      return fail(message, 500);
+      return fail('Internal server error', 500);
     }
   };
 }

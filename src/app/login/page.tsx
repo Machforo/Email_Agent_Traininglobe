@@ -8,7 +8,7 @@ import { api, errorMessage } from '@/lib/client';
 
 /** Only same-origin relative paths — blocks //evil.com open redirects. */
 function safeNext(raw: string | null): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/';
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/dashboard';
   return raw;
 }
 
