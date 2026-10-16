@@ -124,7 +124,8 @@ async def test_build_reminder_email_content():
     assert "Review in Scheduled Queue" in body_html
     assert "Reschedule" in body_html
     assert "Send Now" in body_html
-    assert "No action is needed" in body_html
+    assert "Manual Release Policy" in body_html
+    assert "not sent automatically" in body_text
     assert "token=" in body_html
 
 
@@ -452,3 +453,37 @@ async def test_notifications_api_endpoints():
         )
         assert res_dismiss.status_code == 200
         assert res_dismiss.json()["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_scheduled_email_not_sent_automatically():
+    """Verify that background scheduler NEVER automatically dispatches scheduled emails."""
+    from app.services.scheduler_service import check_scheduled_deliveries
+    await connect_to_mongo()
+    db = get_database()
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    email_id = ObjectId()
+    lead_id = ObjectId()
+    admin_id = ObjectId()
+
+    # Scheduled email past its scheduled_for time
+    scheduled_email = {
+        "_id": email_id,
+        "lead_id": str(lead_id),
+        "subject": "Hold Until Manual Release",
+        "status": "Scheduled",
+        "scheduled_for": now - datetime.timedelta(minutes=30),  # In the past
+        "approver_id": str(admin_id),
+        "sent_at": None,
+        "created_at": now,
+    }
+    await db.emails.insert_one(scheduled_email)
+
+    # Run check_scheduled_deliveries
+    await check_scheduled_deliveries()
+
+    # Verify email was NOT sent and remains in Scheduled status awaiting manual admin release
+    reloaded = await db.emails.find_one({"_id": email_id})
+    assert reloaded["status"] == "Scheduled"
+    assert reloaded["sent_at"] is None

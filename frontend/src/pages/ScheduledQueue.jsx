@@ -159,7 +159,7 @@ export default function ScheduledQueue() {
       {/* Page Header */}
       <PageHeader
         title="Scheduled Delivery Queue"
-        subtitle="Approved emails pending automated dispatch during business hours. Fully cancelable or editable prior to release."
+        subtitle="Approved emails staged for delivery. Scheduled emails are held safely and require manual release ('Send Now') by an authorized admin."
         actions={
           <button
             type="button"
@@ -188,6 +188,7 @@ export default function ScheduledQueue() {
         ) : (
           <div className="grid grid-cols-1 gap-4">
             {scheduled.map((item) => {
+              const isDue = item.scheduled_for && new Date(item.scheduled_for) <= new Date();
               const relativeTimeStr = formatRelativeTime(item.scheduled_for);
               const formattedTime = formatDateTime(item.scheduled_for, true);
 
@@ -198,12 +199,19 @@ export default function ScheduledQueue() {
                 >
                   <div className="space-y-2.5 flex-1">
                     <div className="flex flex-wrap items-center gap-2.5">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-                        <Clock className="h-3 w-3 text-amber-600" />
-                        {relativeTimeStr || 'Pending time'}
-                      </span>
+                      {isDue ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                          <CheckCircle className="h-3 w-3 text-emerald-600" />
+                          Ready to Send (Due Now)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                          <Clock className="h-3 w-3 text-amber-600" />
+                          {relativeTimeStr || 'Pending time'}
+                        </span>
+                      )}
                       <span className="text-xs text-slate-500">
-                        Deliver at:{' '}
+                        Target time:{' '}
                         <strong className="text-slate-800 font-medium">
                           {formattedTime}
                         </strong>

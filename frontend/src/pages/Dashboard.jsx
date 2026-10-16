@@ -318,7 +318,7 @@ export default function Dashboard({ metrics, onNavigateTab, user }) {
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Approved outreach scheduled for autonomous release within the configured sending window.
+                Approved emails held for release. Scheduled outreach requires explicit admin release ('Send Now') before dispatch.
               </p>
             </div>
           </div>
@@ -365,12 +365,19 @@ export default function Dashboard({ metrics, onNavigateTab, user }) {
                 >
                   <div className="space-y-1.5 flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-                        <Clock className="h-3 w-3 text-amber-600" />
-                        {countdown}
-                      </span>
+                      {countdown === 'Due now' ? (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                          <CheckCircle className="h-3 w-3 text-emerald-600" />
+                          Ready to Send
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                          <Clock className="h-3 w-3 text-amber-600" />
+                          {countdown}
+                        </span>
+                      )}
                       <span className="text-xs text-slate-600 font-medium">
-                        Deliver at: <strong className="text-slate-800">{formattedTime}</strong>
+                        Target time: <strong className="text-slate-800">{formattedTime}</strong>
                       </span>
                       {item.lead_company && (
                         <span className="text-xs text-slate-400">• {item.lead_company}</span>
