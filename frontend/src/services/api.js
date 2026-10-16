@@ -1,4 +1,7 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD ? 'https://email-agent-traininglobe.onrender.com/api' : '/api')
+).replace(/\/+$/, '');
 
 function getAuthHeader() {
   const token = localStorage.getItem('traininglobe_token');
