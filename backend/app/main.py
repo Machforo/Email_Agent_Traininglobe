@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import close_mongo_connection, connect_to_mongo
 from app.services.scheduler_service import start_scheduler, stop_scheduler
-from app.api import approvals, audit, auth, emails, leads, reports, settings as settings_api
+from app.services.reminder_service import process_due_reminders
+from app.api import approvals, audit, auth, emails, leads, notifications, reports, settings as settings_api
 
 
 @asynccontextmanager
@@ -13,6 +14,11 @@ async def lifespan(app: FastAPI):
     # Startup: Connect to MongoDB Atlas & start background scheduler
     await connect_to_mongo()
     start_scheduler()
+    # Recover any pending reminders immediately on server startup
+    try:
+        await process_due_reminders()
+    except Exception:
+        pass
     yield
     # Shutdown
     stop_scheduler()
@@ -43,6 +49,7 @@ app.include_router(emails.router, prefix="/api")
 app.include_router(settings_api.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
+app.include_router(notifications.router, prefix="/api")
 
 
 @app.get("/api/health")

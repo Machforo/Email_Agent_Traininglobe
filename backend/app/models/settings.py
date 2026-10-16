@@ -13,6 +13,13 @@ class SystemSettingsSchema(BaseModel):
     max_followups: int = 3
     dry_run_mode: bool = True
 
+    # Scheduled Email Reminders
+    reminder_enabled: bool = True
+    reminder_lead_minutes: int = Field(default=30, ge=5, le=1440)
+    reminder_email_recipients: List[str] = Field(default_factory=list)
+    reminder_channels: List[str] = Field(default_factory=lambda: ["email", "dashboard"])
+    reminder_send_immediately_if_due: bool = True
+
 
 class KnowledgeBaseItemCreate(BaseModel):
     category: str  # "ABOUT" | "SERVICES" | "APPROVED_CLAIMS" | "RESTRICTIONS"

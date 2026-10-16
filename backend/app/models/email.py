@@ -59,6 +59,11 @@ class EmailResponse(BaseModel):
     sent_at: Optional[datetime.datetime] = None
     idempotency_key: Optional[str] = None
     zoho_message_id: Optional[str] = None
+    reminder_at: Optional[datetime.datetime] = None
+    reminder_sent_at: Optional[datetime.datetime] = None
+    reminder_status: Optional[str] = None  # pending | sent | skipped | failed | cancelled
+    reminder_retry_count: int = 0
+    reminder_error: Optional[str] = None
     created_at: Optional[datetime.datetime] = None
 
 

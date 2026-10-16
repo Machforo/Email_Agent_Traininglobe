@@ -7,6 +7,7 @@ import Leads from './pages/Leads';
 import ScheduledQueue from './pages/ScheduledQueue';
 import Settings from './pages/Settings';
 import AuditLogs from './pages/AuditLogs';
+import ScheduledReminderAlert from './components/ScheduledReminderAlert';
 import { api } from './services/api';
 import { PermissionProvider, usePermissions } from './services/permissions';
 import { ShieldCheck, CheckCircle2, BookOpen, Info, AlertCircle, X } from 'lucide-react';
@@ -16,6 +17,10 @@ function AppContent({ user, setUser, onLogout }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [metrics, setMetrics] = useState(null);
   const [approvalQueue, setApprovalQueue] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [activePopupAlert, setActivePopupAlert] = useState(null);
+  const [dismissedAlertIds, setDismissedAlertIds] = useState([]);
+  const [actionLoading, setActionLoading] = useState(false);
   const [toast, setToast] = useState(null);
 
   const showToast = (message, type = 'info') => {
@@ -31,6 +36,28 @@ function AppContent({ user, setUser, onLogout }) {
     window.addEventListener('global-api-forbidden', handleForbidden);
     return () => window.removeEventListener('global-api-forbidden', handleForbidden);
   }, []);
+
+  // Poll notifications & delivery reminders
+  const refreshNotifications = async () => {
+    if (!localStorage.getItem('traininglobe_token')) return;
+    try {
+      const data = await api.getNotifications().catch(() => []);
+      setNotifications(data || []);
+
+      // Check for unread delivery reminders to show as pop-up alert (Super Admin only for actions)
+      const unreadAlerts = (data || []).filter(
+        (n) => !n.read_at && !n.dismissed_at && n.type === 'SCHEDULED_EMAIL_REMINDER'
+      );
+      if (unreadAlerts.length > 0) {
+        const latest = unreadAlerts[0];
+        if (!dismissedAlertIds.includes(latest.id)) {
+          setActivePopupAlert(latest);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to sync notifications:', err);
+    }
+  };
 
   // Poll / refresh metrics and approval queue
   const refreshCoreData = async () => {
@@ -50,14 +77,117 @@ function AppContent({ user, setUser, onLogout }) {
   useEffect(() => {
     if (user) {
       refreshCoreData();
-      const interval = setInterval(refreshCoreData, 20000);
-      return () => clearInterval(interval);
+      refreshNotifications();
+      const intervalCore = setInterval(refreshCoreData, 20000);
+      const intervalNotif = setInterval(refreshNotifications, 30000);
+      return () => {
+        clearInterval(intervalCore);
+        clearInterval(intervalNotif);
+      };
     }
-  }, [user]);
+  }, [user, dismissedAlertIds]);
+
+  // Handle deep-link query parameters on initial page mount (e.g. from reminder email)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search) {
+      const params = new URLSearchParams(window.location.search);
+      const emailId = params.get('email_id');
+      const action = params.get('action');
+      const token = params.get('token');
+
+      if (emailId) {
+        // If link includes action token, verify it
+        if (token) {
+          api.verifyActionToken(token)
+            .then(() => {
+              setActiveTab('scheduled');
+            })
+            .catch((err) => {
+              showToast('Action link expired or invalid. Please select item from queue.', 'warning');
+              setActiveTab('scheduled');
+            });
+        } else {
+          setActiveTab('scheduled');
+        }
+      }
+    }
+  }, []);
+
+  // Notification Popup Handlers
+  const handlePopupDismiss = async (notificationId) => {
+    try {
+      await api.dismissNotification(notificationId);
+    } catch (e) {
+      // Ignore network errors on dismiss
+    }
+    setDismissedAlertIds((prev) => [...prev, notificationId]);
+    setActivePopupAlert(null);
+    refreshNotifications();
+  };
+
+  const handlePopupView = (scheduledEmailId) => {
+    setActiveTab('scheduled');
+  };
+
+  const handlePopupReschedule = async (scheduledEmailId, newIsoTime) => {
+    try {
+      setActionLoading(true);
+      await api.rescheduleDraft(scheduledEmailId, newIsoTime);
+      showToast('Delivery rescheduled successfully. New reminder set.', 'success');
+      setActivePopupAlert(null);
+      refreshCoreData();
+      refreshNotifications();
+    } catch (err) {
+      showToast(`Reschedule failed: ${err.message}`, 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handlePopupSendNow = async (scheduledEmailId) => {
+    try {
+      setActionLoading(true);
+      await api.approveDraft(scheduledEmailId, true);
+      showToast('Email dispatched immediately via Zoho Mail.', 'success');
+      setActivePopupAlert(null);
+      refreshCoreData();
+      refreshNotifications();
+    } catch (err) {
+      showToast(`Send failed: ${err.message}`, 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handlePopupCancel = async (scheduledEmailId) => {
+    try {
+      setActionLoading(true);
+      await api.rejectDraft(scheduledEmailId, {
+        reason: 'Cancelled from Scheduled Delivery reminder alert',
+        regenerate: false,
+      });
+      showToast('Scheduled delivery cancelled.', 'success');
+      setActivePopupAlert(null);
+      refreshCoreData();
+      refreshNotifications();
+    } catch (err) {
+      showToast(`Cancellation failed: ${err.message}`, 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      await api.markAllNotificationsRead();
+      refreshNotifications();
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   // Route guard: check permission before navigating
   const handleNavigateTab = (tabId) => {
-    // If navigating to restricted tabs
     if (tabId === 'rules' && isReadOnly) {
       showToast("You don't have permission to view that page", 'warning');
       setActiveTab('dashboard');
@@ -67,6 +197,7 @@ function AppContent({ user, setUser, onLogout }) {
   };
 
   const pendingApprovalsCount = approvalQueue.length;
+  const unreadNotificationsCount = notifications.filter((n) => !n.read_at && !n.dismissed_at).length;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
@@ -77,7 +208,28 @@ function AppContent({ user, setUser, onLogout }) {
         user={user}
         onLogout={onLogout}
         pendingCount={pendingApprovalsCount}
+        notifications={notifications}
+        unreadNotificationsCount={unreadNotificationsCount}
+        onNotificationClick={(n) => {
+          api.markNotificationRead(n.id).catch(() => {});
+          setActiveTab('scheduled');
+        }}
+        onDismissNotification={handlePopupDismiss}
+        onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
       />
+
+      {/* Floating Pop-up Alert for Upcoming Scheduled Deliveries */}
+      {activePopupAlert && (
+        <ScheduledReminderAlert
+          notification={activePopupAlert}
+          onDismiss={handlePopupDismiss}
+          onView={handlePopupView}
+          onReschedule={handlePopupReschedule}
+          onSendNow={handlePopupSendNow}
+          onCancelSend={handlePopupCancel}
+          actionLoading={actionLoading}
+        />
+      )}
 
       {/* Slim, Light-Blue "View-only access" Banner for Staff Admin */}
       {isReadOnly && (

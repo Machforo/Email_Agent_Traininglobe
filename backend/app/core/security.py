@@ -27,6 +27,8 @@ PERMISSIONS_MAP = {
         "settings:write",
         "audit:read",
         "users:manage",
+        "notifications:read",
+        "notifications:write",
     ],
     "ADMIN": [
         "dashboard:read",
@@ -35,6 +37,7 @@ PERMISSIONS_MAP = {
         "emails:read",
         "knowledge:read",
         "audit:read",
+        "notifications:read",
     ],
     "STAFF_ADMIN": [
         "dashboard:read",
@@ -43,6 +46,7 @@ PERMISSIONS_MAP = {
         "emails:read",
         "knowledge:read",
         "audit:read",
+        "notifications:read",
     ],
 }
 
@@ -193,3 +197,27 @@ def get_user_scope_filter(current_user: Dict[str, Any]) -> Dict[str, Any]:
     if current_user.get("role") == "SUPER_ADMIN":
         return {}
     return {"owner_id": current_user["id"]}
+
+
+def create_action_token(email_id: str, action: str, expires_in_minutes: int = 2880) -> str:
+    """Create a signed, expiring token for reminder email deep-linking."""
+    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=expires_in_minutes)
+    payload = {
+        "email_id": email_id,
+        "action": action,
+        "exp": expire,
+        "iat": datetime.datetime.now(datetime.timezone.utc),
+        "purpose": "scheduled_reminder_action"
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
+def verify_action_token(token: str) -> Optional[Dict[str, Any]]:
+    """Verify signed action token. Returns payload or None if invalid/expired."""
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("purpose") != "scheduled_reminder_action":
+            return None
+        return payload
+    except Exception:
+        return None

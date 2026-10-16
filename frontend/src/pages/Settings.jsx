@@ -13,6 +13,8 @@ import {
   Clock,
   Send,
   Sparkles,
+  Bell,
+  Mail,
 } from 'lucide-react';
 import { api } from '../services/api';
 import PageHeader from '../components/PageHeader';
@@ -34,12 +36,23 @@ export default function Settings() {
   // Settings Form State
   const [settingsForm, setSettingsForm] = useState({
     daily_limit: 50,
+    daily_send_limit: 50,
     send_window_start: '09:00',
     send_window_end: '18:00',
+    business_hours_start: 9,
+    business_hours_end: 19,
     timezone: 'Asia/Kolkata',
     followup_interval_days: 3,
+    followup_intervals_days: [3, 5, 7],
     max_followups: 4,
     dry_run_mode: true,
+    default_send_time: '18:00',
+    // Scheduled Email Reminders
+    reminder_enabled: true,
+    reminder_lead_minutes: 30,
+    reminder_email_recipients_str: '',
+    reminder_channels: ['email', 'dashboard'],
+    reminder_send_immediately_if_due: true,
   });
 
   // Knowledge Base State
@@ -70,14 +83,27 @@ export default function Settings() {
       ]);
 
       if (settingsData) {
+        const extraRecipients = Array.isArray(settingsData.reminder_email_recipients)
+          ? settingsData.reminder_email_recipients.join(', ')
+          : '';
         setSettingsForm({
-          daily_limit: settingsData.daily_limit || 50,
+          daily_limit: settingsData.daily_send_limit || settingsData.daily_limit || 50,
+          daily_send_limit: settingsData.daily_send_limit || settingsData.daily_limit || 50,
           send_window_start: settingsData.send_window_start || '09:00',
           send_window_end: settingsData.send_window_end || '18:00',
+          business_hours_start: settingsData.business_hours_start !== undefined ? settingsData.business_hours_start : 9,
+          business_hours_end: settingsData.business_hours_end !== undefined ? settingsData.business_hours_end : 19,
           timezone: settingsData.timezone || 'Asia/Kolkata',
           followup_interval_days: settingsData.followup_interval_days || 3,
+          followup_intervals_days: settingsData.followup_intervals_days || [3, 5, 7],
           max_followups: settingsData.max_followups || 4,
           dry_run_mode: settingsData.dry_run_mode !== undefined ? settingsData.dry_run_mode : true,
+          default_send_time: settingsData.default_send_time || '18:00',
+          reminder_enabled: settingsData.reminder_enabled !== undefined ? settingsData.reminder_enabled : true,
+          reminder_lead_minutes: settingsData.reminder_lead_minutes || 30,
+          reminder_email_recipients_str: extraRecipients,
+          reminder_channels: settingsData.reminder_channels || ['email', 'dashboard'],
+          reminder_send_immediately_if_due: settingsData.reminder_send_immediately_if_due !== undefined ? settingsData.reminder_send_immediately_if_due : true,
         });
       }
 
@@ -93,8 +119,31 @@ export default function Settings() {
     e.preventDefault();
     try {
       setSavingSettings(true);
-      await api.updateSettings(settingsForm);
-      showNotification('success', 'System dispatch rules updated successfully');
+      const recipientList = settingsForm.reminder_email_recipients_str
+        ? settingsForm.reminder_email_recipients_str
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
+        : [];
+
+      const payload = {
+        default_send_time: settingsForm.default_send_time || '18:00',
+        timezone: settingsForm.timezone || 'Asia/Kolkata',
+        business_hours_start: settingsForm.business_hours_start || 9,
+        business_hours_end: settingsForm.business_hours_end || 19,
+        daily_send_limit: settingsForm.daily_limit || settingsForm.daily_send_limit || 50,
+        followup_intervals_days: settingsForm.followup_intervals_days || [3, 5, 7],
+        max_followups: settingsForm.max_followups || 3,
+        dry_run_mode: settingsForm.dry_run_mode,
+        reminder_enabled: Boolean(settingsForm.reminder_enabled),
+        reminder_lead_minutes: parseInt(settingsForm.reminder_lead_minutes) || 30,
+        reminder_email_recipients: recipientList,
+        reminder_channels: settingsForm.reminder_channels || ['email', 'dashboard'],
+        reminder_send_immediately_if_due: Boolean(settingsForm.reminder_send_immediately_if_due),
+      };
+
+      await api.updateSettings(payload);
+      showNotification('success', 'System dispatch and reminder rules updated successfully');
     } catch (err) {
       showNotification('error', `Failed to update settings: ${err.message}`);
     } finally {
@@ -460,6 +509,140 @@ export default function Settings() {
                   Halts cadence automatically after max steps are reached.
                 </span>
               </div>
+            </div>
+
+            {/* Scheduled Email Reminders (Super Admin Alerting) */}
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-semibold text-slate-900 text-xs sm:text-sm">
+                  <Bell className="h-4 w-4 text-indigo-600" />
+                  Scheduled Email Reminders (Super Admin Alerting)
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.reminder_enabled}
+                    onChange={(e) =>
+                      setSettingsForm({ ...settingsForm, reminder_enabled: e.target.checked })
+                    }
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+              </div>
+
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Super Admins are warned before approved emails are sent, via reminder email and real-time dashboard alerts, allowing time to reschedule, cancel, or dispatch immediately.
+              </p>
+
+              {settingsForm.reminder_enabled && (
+                <div className="space-y-4 pt-3 border-t border-indigo-100">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block font-semibold uppercase tracking-wider text-slate-700 mb-1">
+                        Advance Warning Time (Minutes)
+                      </label>
+                      <input
+                        type="number"
+                        min="5"
+                        max="1440"
+                        value={settingsForm.reminder_lead_minutes}
+                        onChange={(e) =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            reminder_lead_minutes: parseInt(e.target.value) || 30,
+                          })
+                        }
+                        className="w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-3 focus:ring-indigo-100 bg-white"
+                      />
+                      <span className="text-[11px] text-slate-500 mt-1 block">
+                        Allowed 5 to 1440 mins (default: 30 minutes before delivery).
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold uppercase tracking-wider text-slate-700 mb-1">
+                        Notification Channels
+                      </label>
+                      <div className="flex items-center gap-5 pt-2">
+                        <label className="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={settingsForm.reminder_channels.includes('email')}
+                            onChange={(e) => {
+                              const newChannels = e.target.checked
+                                ? [...settingsForm.reminder_channels, 'email']
+                                : settingsForm.reminder_channels.filter((c) => c !== 'email');
+                              setSettingsForm({ ...settingsForm, reminder_channels: newChannels });
+                            }}
+                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <Mail className="h-3.5 w-3.5 text-slate-500" />
+                          <span>Zoho Email</span>
+                        </label>
+
+                        <label className="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={settingsForm.reminder_channels.includes('dashboard')}
+                            onChange={(e) => {
+                              const newChannels = e.target.checked
+                                ? [...settingsForm.reminder_channels, 'dashboard']
+                                : settingsForm.reminder_channels.filter((c) => c !== 'dashboard');
+                              setSettingsForm({ ...settingsForm, reminder_channels: newChannels });
+                            }}
+                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <Bell className="h-3.5 w-3.5 text-slate-500" />
+                          <span>Dashboard Pop-up</span>
+                        </label>
+                      </div>
+                      <span className="text-[11px] text-slate-500 mt-1 block">
+                        Both channels enabled by default.
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold uppercase tracking-wider text-slate-700 mb-1">
+                      Additional Super Admin Emails (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. admin2@traininglobe.com, ops@traininglobe.com"
+                      value={settingsForm.reminder_email_recipients_str}
+                      onChange={(e) =>
+                        setSettingsForm({
+                          ...settingsForm,
+                          reminder_email_recipients_str: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-3 focus:ring-indigo-100 bg-white"
+                    />
+                    <span className="text-[11px] text-slate-500 mt-1 block">
+                      The approving Super Admin is always notified by default. Add additional emails separated by commas.
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="reminder_immediate_due"
+                      checked={settingsForm.reminder_send_immediately_if_due}
+                      onChange={(e) =>
+                        setSettingsForm({
+                          ...settingsForm,
+                          reminder_send_immediately_if_due: e.target.checked,
+                        })
+                      }
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <label htmlFor="reminder_immediate_due" className="text-xs text-slate-700 cursor-pointer">
+                      Send reminder immediately if scheduled delivery is closer than the warning lead time
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">

@@ -15,6 +15,11 @@ from app.models.email import (
 from app.services.delivery_service import send_approved_email
 from app.services.ai_service import draft_first_email
 from app.core.audit import log_audit_event
+from app.services.reminder_service import (
+    compute_reminder_at,
+    cancel_pending_reminder,
+    get_system_settings_dict,
+)
 
 router = APIRouter(prefix="/approvals", tags=["Approval Queue"])
 
@@ -113,6 +118,7 @@ async def approve_draft(
             }
         )
         # Dispatch immediately through the delivery gatekeeper
+        await cancel_pending_reminder(draft_id, reason="sent_now")
         try:
             sent_result = await send_approved_email(draft_id, current_user)
             return sent_result
@@ -121,6 +127,12 @@ async def approve_draft(
     else:
         # Schedule for future delivery
         target_time = schedule_time or (now + datetime.timedelta(hours=2))
+        config = await get_system_settings_dict()
+        reminder_at, reminder_status = compute_reminder_at(
+            target_time,
+            lead_minutes=config.get("reminder_lead_minutes", 30),
+            send_immediately_if_due=config.get("reminder_send_immediately_if_due", True)
+        )
         await db.emails.update_one(
             {"_id": ObjectId(draft_id)},
             {
@@ -129,7 +141,12 @@ async def approve_draft(
                     "approved_by": current_user["id"],
                     "approver_name": current_user["name"],
                     "approved_at": now,
-                    "scheduled_for": target_time
+                    "scheduled_for": target_time,
+                    "reminder_at": reminder_at,
+                    "reminder_status": reminder_status,
+                    "reminder_sent_at": None,
+                    "reminder_retry_count": 0,
+                    "reminder_error": None
                 }
             }
         )
@@ -138,7 +155,11 @@ async def approve_draft(
             action="SCHEDULE_EMAIL",
             entity_type="EMAIL",
             entity_id=draft_id,
-            details={"scheduled_for": target_time.isoformat()}
+            details={
+                "scheduled_for": target_time.isoformat(),
+                "reminder_at": reminder_at.isoformat() if reminder_at else None,
+                "reminder_status": reminder_status
+            }
         )
         updated = await db.emails.find_one({"_id": ObjectId(draft_id)})
         return serialize_doc(updated)
@@ -202,6 +223,7 @@ async def reject_draft(
         raise HTTPException(status_code=404, detail="Draft not found")
 
     now = datetime.datetime.now(datetime.timezone.utc)
+    await cancel_pending_reminder(draft_id, reason="rejected_cancelled")
 
     await db.emails.update_one(
         {"_id": ObjectId(draft_id)},
@@ -258,15 +280,44 @@ async def reschedule_draft(
     req: DraftRescheduleRequest,
     current_user: Dict[str, Any] = Depends(require_permission("approvals:write"))
 ):
-    """Change scheduled delivery time."""
+    """Change scheduled delivery time and recompute reminder."""
     db = get_database()
     draft = await db.emails.find_one({"_id": ObjectId(draft_id)})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
+    config = await get_system_settings_dict()
+    reminder_at, reminder_status = compute_reminder_at(
+        req.scheduled_for,
+        lead_minutes=config.get("reminder_lead_minutes", 30),
+        send_immediately_if_due=config.get("reminder_send_immediately_if_due", True)
+    )
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        draft_oid = ObjectId(draft_id)
+        match_ids = [str(draft_id), draft_oid]
+    except Exception:
+        match_ids = [str(draft_id)]
+
+    await db.notifications.update_many(
+        {"scheduled_email_id": {"$in": match_ids}},
+        {"$set": {"is_active": False, "dismissed_at": now}}
+    )
+
     await db.emails.update_one(
         {"_id": ObjectId(draft_id)},
-        {"$set": {"scheduled_for": req.scheduled_for, "status": "Scheduled"}}
+        {
+            "$set": {
+                "scheduled_for": req.scheduled_for,
+                "status": "Scheduled",
+                "reminder_at": reminder_at,
+                "reminder_status": reminder_status,
+                "reminder_sent_at": None,
+                "reminder_retry_count": 0,
+                "reminder_error": None
+            }
+        }
     )
 
     await log_audit_event(
@@ -274,7 +325,11 @@ async def reschedule_draft(
         action="RESCHEDULE_EMAIL",
         entity_type="EMAIL",
         entity_id=draft_id,
-        details={"new_scheduled_for": req.scheduled_for.isoformat()}
+        details={
+            "new_scheduled_for": req.scheduled_for.isoformat(),
+            "new_reminder_at": reminder_at.isoformat() if reminder_at else None,
+            "reminder_status": reminder_status
+        }
     )
 
     updated = await db.emails.find_one({"_id": ObjectId(draft_id)})

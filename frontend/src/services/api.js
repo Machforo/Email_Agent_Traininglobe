@@ -110,4 +110,11 @@ export const api = {
 
   // Audit Logs
   getAuditLogs: (limit = 100) => request(`/audit?limit=${limit}`),
+
+  // Notifications & Scheduled Email Reminders
+  getNotifications: (unreadOnly = false) => request(`/notifications?unread_only=${unreadOnly}`),
+  markNotificationRead: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
+  dismissNotification: (id) => request(`/notifications/${id}/dismiss`, { method: 'POST' }),
+  markAllNotificationsRead: () => request('/notifications/read-all', { method: 'POST' }),
+  verifyActionToken: (token) => request(`/notifications/verify-token?token=${encodeURIComponent(token)}`),
 };

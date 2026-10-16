@@ -38,6 +38,35 @@ export default function ScheduledQueue() {
     fetchScheduled();
   }, []);
 
+  // Handle deep linking from reminder emails or notification click
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search && scheduled.length > 0) {
+      const params = new URLSearchParams(window.location.search);
+      const emailId = params.get('email_id');
+      const action = params.get('action');
+
+      if (emailId) {
+        const item = scheduled.find((s) => s.id === emailId);
+        if (item) {
+          if (action === 'reschedule' && !isReadOnly) {
+            setRescheduleItem(item);
+            setNewDateTime(
+              item.scheduled_for
+                ? new Date(item.scheduled_for).toISOString().slice(0, 16)
+                : ''
+            );
+          } else if (action === 'send_now' && !isReadOnly) {
+            setItemToSendNow(item);
+          } else if (action === 'cancel' && !isReadOnly) {
+            setItemToCancel(item);
+          }
+          // Clean URL so refresh does not re-open modal
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+    }
+  }, [scheduled, isReadOnly]);
+
   const fetchScheduled = async () => {
     try {
       setLoading(true);

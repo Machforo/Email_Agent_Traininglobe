@@ -8,13 +8,14 @@ from app.core.database import get_database
 from app.models.lead import LeadStatus
 from app.services.ai_service import draft_followup_email
 from app.services.delivery_service import send_approved_email
+from app.services.reminder_service import cancel_pending_reminder, process_due_reminders
 
 scheduler = AsyncIOScheduler()
 
 
 async def get_system_settings() -> Dict[str, Any]:
     db = get_database()
-    config = await db.system_settings.find_one({"_id": "global_config"})
+    config = await db.system_settings.find_one({"_id": "global_config"}) if db is not None else None
     if not config:
         return {
             "default_send_time": settings.DEFAULT_SEND_TIME,
@@ -23,7 +24,12 @@ async def get_system_settings() -> Dict[str, Any]:
             "business_hours_end": settings.BUSINESS_HOURS_END,
             "daily_send_limit": settings.DAILY_SEND_LIMIT,
             "max_followups": settings.MAX_FOLLOWUPS,
-            "followup_intervals_days": [3, 5, 7]
+            "followup_intervals_days": [3, 5, 7],
+            "reminder_enabled": True,
+            "reminder_lead_minutes": 30,
+            "reminder_email_recipients": [],
+            "reminder_channels": ["email", "dashboard"],
+            "reminder_send_immediately_if_due": True,
         }
     return config
 
@@ -65,6 +71,7 @@ async def check_scheduled_deliveries():
             }
             # Set to Approved so delivery gate passes
             await db.emails.update_one({"_id": email_doc["_id"]}, {"$set": {"status": "Approved"}})
+            await cancel_pending_reminder(str(email_doc["_id"]), reason="dispatched")
             await send_approved_email(str(email_doc["_id"]), approver)
         except Exception:
             pass
@@ -160,6 +167,7 @@ async def check_followup_cadence():
 def start_scheduler():
     scheduler.add_job(check_scheduled_deliveries, "interval", minutes=1, id="check_scheduled")
     scheduler.add_job(check_followup_cadence, "interval", minutes=5, id="check_followups")
+    scheduler.add_job(process_due_reminders, "interval", minutes=1, id="process_reminders")
     scheduler.start()
 
 

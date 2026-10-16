@@ -23,6 +23,11 @@ async def connect_to_mongo():
     await db.opt_out_suppression.create_index("email", unique=True)
     await db.audit_logs.create_index([("user_id", 1), ("timestamp", -1)])
     await db.knowledge_base.create_index("category")
+    await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+    await db.notifications.create_index("scheduled_email_id")
+    await db.notifications.create_index("is_active")
+    await db.emails.create_index("reminder_at")
+    await db.emails.create_index("reminder_status")
 
 
 async def close_mongo_connection():

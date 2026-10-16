@@ -8,6 +8,7 @@ from app.core.database import serialize_doc
 from app.models.lead import LeadStatus, can_transition
 from app.services.zoho_service import send_email_via_zoho, update_zoho_lead_status
 from app.core.audit import log_audit_event
+from app.services.reminder_service import cancel_pending_reminder
 
 
 UNSUBSCRIBE_FOOTER = (
@@ -115,6 +116,7 @@ async def send_approved_email(draft_id: str, approver_user: Dict[str, Any]) -> D
             }
         }
     )
+    await cancel_pending_reminder(draft_id, reason="dispatched")
 
     # Lead lifecycle progression
     current_status = lead.get("status", LeadStatus.NEW_LEAD.value)
