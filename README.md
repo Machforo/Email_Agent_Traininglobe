@@ -1,245 +1,205 @@
-# Outreach Agent — Traininglobe
+# Traininglobe AI Lead Nurturing
 
-An AI-assisted outreach dashboard for institutional sales. A team member adds an
-institution and a note about the angle they want; a chain of agents researches the
-institution on the live web, writes the mail, fact-checks every claim against
-sources, revises what doesn't hold up, and hands it to a human. **Nothing is sent
-until a person presses Approve.** After that the system runs the follow-up ladder,
-watches for replies, and drafts responses.
+> **Intelligent, Grounded B2B Outreach with Mandatory Human Approval Gatekeeper**
+
+An enterprise-grade AI lead nurturing and cadence management platform integrated with **Zoho CRM** and **Zoho Mail**. The system researches target accounts, synthesizes personalized emails grounded exclusively in verified Traininglobe corporate credentials, tracks replies with automated intent classification, and enforces a **strict backend gatekeeper requiring explicit human admin approval before any email can be dispatched**.
 
 ---
 
-## Architecture
+## 🌟 Key Architecture & Principles
 
-The app is split across two hosts because the agent cascade takes 145–355 seconds and
-no serverless platform will hold a request open that long (Vercel caps at 60s on Hobby,
-300s on Pro).
+1. **Mandatory Human Approval Gatekeeper**:
+   - AI drafts are stored in `Draft Ready` status and **can NEVER be dispatched automatically**.
+   - The delivery service checks for `status == "Approved"`, a non-null `approved_by` user ID, and absence from the `opt_out_suppression` table before dispatching.
+   - Any attempt to bypass human approval triggers an immediate `403 Forbidden` and is permanently logged in the audit trail.
+2. **Zero-Hallucination Knowledge Base Grounding**:
+   - AI prompt contexts are anchored strictly to verified claims stored in the `knowledge_base` collection (accreditations, course curricula, delivery formats, verified metrics).
+   - Zero invented pricing, guarantees, or partner names.
+3. **Zoho CRM & Zoho Mail Integration**:
+   - OAuth 2.0 refresh-token flow with automated access token refresh and token caching.
+   - Pulls and updates leads from Zoho CRM (`/crm/v6/Leads`).
+   - Dispatches approved emails via Zoho Mail API (`/mail/v1/accounts/{accountId}/messages`).
+   - Includes transparent **Dry-Run Mode** (`ZOHO_DRY_RUN=true`) allowing complete UI and cadence testing with zero risk of sending unapproved emails.
+4. **Intelligent Inbound Reply Classifier**:
+   - Classifies replies into 8 intents: `Interested`, `Asks a question`, `Pricing concern`, `Contact me later`, `Requests a proposal`, `No reply`, `Not interested / asks to stop`, and `Agrees to collaborate`.
+   - On opt-out, automatically halts cadence, adds the contact to global suppression, and tags the lead in Zoho CRM.
+5. **Strict Role-Based Access Control (RBAC)**:
+   - **Super Admin**: Full visibility over all leads, users, approval queues, dispatch policies, and audit trails.
+   - **Admin / Sales Rep**: Scoped access restricted strictly to leads assigned to their user ID.
 
-```
-Vercel  →  Next.js app: UI, fast reads, enqueues jobs   (responds in ~0.5s)
-Render  →  worker: all AI and all email, drains queue   (takes 145-355s)
-Render  →  managed Postgres, shared by both
-```
+---
 
-Nothing slow or outward-facing runs inside an HTTP request. The app writes a `Job` row
-and returns a job id; the UI polls it. See [DEPLOYMENT.md](DEPLOYMENT.md).
+## 🛠️ Tech Stack
 
-## Quick start (local)
+- **Backend**: Python 3.10+ / FastAPI / Motor (Async MongoDB) / Pydantic v2 / APScheduler
+- **Database**: MongoDB Atlas (`traininglobe_lead_nurturing`)
+- **Frontend**: React 19 / Tailwind CSS v4 / Vite / Lucide React / Modern Glassmorphism UI
+- **LLM Engine**: Multi-provider support (Groq / Gemini / OpenAI) with deterministic grounded fallback
+- **Authentication**: JWT Bearer Tokens with bcrypt password hashing
 
-Three terminals. No Postgres install needed — `npm run pg` serves PGlite (real Postgres
-compiled to WASM) over the Postgres wire protocol, so local matches production.
+---
+
+## 🔐 Credentials & Default Accounts
+
+| Role | Email | Password | Access Level |
+| :--- | :--- | :--- | :--- |
+| **Super Admin** | `admin@traininglobe.com` | `121archis` | Global Queue, All Leads, KB, Audit, Rules |
+| **Sales Rep Admin** | `member1@traininglobe.com` | `Member@123` | Scoped to assigned leads |
+
+---
+
+## 🚀 Quickstart Guide
+
+### 1. Prerequisites
+- Python 3.10+ installed
+- Node.js 20+ and npm installed
+- MongoDB Atlas connection string (`MONGO_URI` in `.env`)
+
+### 2. Backend Setup & Startup
 
 ```bash
+# Navigate to backend directory
+cd backend
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Run database seed script (creates users, sample leads, knowledge base facts)
+python seed_data.py
+
+# Start FastAPI development server
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+The FastAPI backend will be live at:
+- **API Base**: `http://127.0.0.1:8000/api`
+- **Interactive Swagger Docs**: `http://127.0.0.1:8000/docs`
+
+### 3. Frontend Setup & Startup
+
+```bash
+# Navigate to frontend directory
+cd frontend
+
+# Install Node dependencies
 npm install
+
+# Start Vite dev server
+npm run dev
 ```
 
-```bash
-npm run pg
-```
-
-```bash
-npx prisma migrate deploy && npm run db:seed && npm run dev
-```
-
-```bash
-npm run worker
-```
-
-Open http://localhost:3000 and sign in.
-
-| Account | Email | Password |
-|---|---|---|
-| Admin | `atharv.kumar@webisdom.com` | `ChangeMe@123` |
-| Members | `member1@traininglobe.com` … `member4@…` | `Member@123` |
-
-**Change these passwords before anyone else uses the system.**
-
-On first sign-in each member is asked for their own Gmail **app password**. Mail then
-sends from their own address, so replies come back to them and threading works.
+The React Admin Dashboard will be live at:
+- **Web App**: `http://localhost:5173/`
 
 ---
 
-## The agent cascade
+## 🧪 Testing the Human Approval Gatekeeper & Core Workflows
 
-Each stage is a separate model call, and every one is recorded on the draft so the
-reviewer can see exactly what happened (the "Agent trace" tab).
+Run the automated backend test suite (covering approval gate bypass prevention, opt-out suppression, intent classification, idempotency, and RBAC):
 
-```
-Research  ─ groq/compound-mini ──── live web search: what the institution is,
-   │                                 recent developments, observable gaps + why
-   ▼
-Structure ─ llama-3.3-70b ────────── evidence → gaps / solutions / hooks (JSON)
-   │
-   ▼
-Compose   ─ gpt-oss-120b ─────────── writes the mail from research + template
-   │                                 + the member's notes + learned feedback
-   ▼
-Verify    ─ groq/compound-mini ───── fact-checks every claim on the web; confirms
-   │                                 the recipient actually holds the stated role
-   ▼
-Revise    ─ gpt-oss-120b ─────────── applies the corrections, deletes what can't
-   │                                 be supported (loops up to N times)
-   ▼
-HUMAN APPROVAL ───────────────────── edit, approve, or reject with a reason
-   │
-   ▼
-Send      ─ Gmail SMTP ───────────── tracked, threaded, signed
+```bash
+cd backend
+pytest tests/test_lead_nurturing.py -v
 ```
 
-The verifier does real work. On a test run it flagged the composer for inventing a
-"Digital Innovation Centre", fabricating IBM/Microsoft partnerships, and asserting an
-unsupported placement outcome — all before a human saw the draft.
-
-### Why the models are split up
-
-Groq rate limits are **per model but shared across every API key in the org** — this
-was verified: the remaining-token counter drops no matter which key is used, so
-rotating keys buys reliability, not throughput. Throughput comes from spreading the
-cascade across models, each with its own budget:
-
-| Model | Tokens/min | Used for |
-|---|---|---|
-| `groq/compound-mini` | 70,000 (250 req/window) | web research, fact-checking |
-| `llama-3.3-70b-versatile` | 12,000 | JSON structuring, reply analysis, insights |
-| `openai/gpt-oss-120b` | 8,000 | writing and revising the actual prose |
-| `openai/gpt-oss-20b` | 8,000 | small utility jobs |
-
-`src/lib/ai/limiter.ts` paces requests through a rolling token ledger per model and
-honours the exact `retry-after` the API returns (it asks for 30+ seconds sometimes).
-Because of this pacing a full cascade takes **90–180 seconds on the free tier**. A paid
-Groq tier removes most of that wait; nothing else needs to change.
-
-Reasoning models spend hidden reasoning tokens out of the same completion budget, so
-strict JSON mode can fail mid-object. `chatJson` catches that and retries once with a
-larger budget and lenient parsing rather than failing the pipeline.
-
-### Gemini fallback
-
-Groq's free tier is tight, so `gemini-flash-latest` (~1M token context) backs it up in
-two situations: a prompt too large for the per-model budget — long threads, big
-research dumps, many accumulated feedback rules — and Groq exhausting its retries on
-rate limits or 5xx. The switch is automatic and shows up in the agent trace as
-`gemini-flash-latest (fallback)`.
-
-It deliberately does **not** cover the search models. Gemini's `google_search`
-grounding is quota-blocked on the current key, so falling back there would turn a
-web-grounded fact-check into an ungrounded guess — the pipeline fails loudly instead.
-Malformed-request errors don't trigger it either; only capacity problems do, so real
-bugs stay visible. `npm run fallback-check` verifies all four behaviours.
+### Manual Interactive Walkthrough via UI
+1. Open `http://localhost:5173/` in your browser.
+2. Sign in with `admin@traininglobe.com` / `121archis`.
+3. **Dashboard**: Notice the amber alert banner warning of pending drafts requiring human review.
+4. **Approval Queue**:
+   - Inspect lead research intelligence and synthesized draft.
+   - Test **1-Click Approve & Send Now** (dispatches immediately through the delivery gatekeeper).
+   - Test **Edit Draft** (character counters and tone adjustment).
+   - Test **Schedule for Later** (selects business hours window).
+   - Test **Reject with Feedback** (optionally triggers instant grounded re-draft).
+5. **Leads Portfolio**:
+   - Search leads, filter by lifecycle status, or click **+ Add New Lead**.
+   - Click **Sync Zoho CRM** to pull latest CRM records.
+   - Click any lead to open the **Lead Detail Modal**.
+   - Navigate to the **Inbound Reply Simulator** tab to test prospect replies (e.g. "Can we talk Tuesday?", "Unsubscribe me") and see live AI intent classification.
+6. **Knowledge Base & System Rules**:
+   - Add/remove verified facts in the grounding repository.
+   - Configure daily sending limits and dispatch windows.
+7. **Security & Audit Trail**:
+   - Inspect immutable logs of every human approval, rejection, and dispatch.
 
 ---
 
-## What the system does after the first mail
+## 🔑 Zoho CRM & Zoho Mail Setup Guide
 
-- **Follow-ups.** Three by default, three days apart, configurable. Each is written
-  fresh against the thread, must add something new, and gets shorter each time. They
-  land in the approval queue unless an admin turns on auto-send.
-- **Replies.** The worker polls each member's mailbox over IMAP (read-only — it never
-  marks anything seen or moves mail). A reply is matched to its sequence by RFC
-  threading headers, summarised, classified for sentiment and intent, and the
-  follow-up clock is stopped. A response is drafted for approval.
-- **Bounces.** Detected from delivery-status reports. Hard bounces suppress the
-  address and stop the sequence.
-- **Unsubscribes.** One-click, honoured via `List-Unsubscribe`, and enforced at send
-  time from a suppression list.
+The application connects to Zoho using the standard OAuth 2.0 refresh-token flow.
 
-## The learning loop
+### Step 1: Create a Zoho API Client
+1. Navigate to the [Zoho API Console](https://api-console.zoho.com).
+2. Click **Add Client** and select **Server-based Applications**.
+3. Fill in:
+   - **Client Name**: `Traininglobe AI Nurturing`
+   - **Homepage URL**: `https://traininglobe.com`
+   - **Authorized Redirect URIs**: `http://localhost:8000/api/auth/zoho/callback`
+4. Copy the generated **Client ID** and **Client Secret**.
 
-Every edit a reviewer makes before approving is diffed against the AI original, and a
-model distils the difference into a one-line rule ("open with their own recent
-announcement rather than a compliment"). Rejections with a reason, and rules typed
-directly in Settings, feed the same store. Those rules are injected into every later
-prompt for that member; admins can make a rule team-wide. Settings → *What the AI has
-learned* shows and lets you disable them.
+### Step 2: Generate Zoho OAuth Grant Token
+In your browser, visit the authorization URL (substitute your actual Client ID and Zoho domain, e.g., `.in` or `.com`):
+```text
+https://accounts.zoho.in/oauth/v2/auth?scope=ZohoCRM.modules.leads.ALL,ZohoMail.messages.ALL,ZohoMail.accounts.READ,offline_access&client_id=YOUR_CLIENT_ID&response_type=code&access_type=offline&redirect_uri=http://localhost:8000/api/auth/zoho/callback
+```
+Authorize access. Zoho will redirect to your callback with a `code` query parameter (the Grant Token).
 
-## Analytics
+### Step 3: Exchange Grant Token for Refresh Token
+Execute a `POST` request to generate the permanent Refresh Token:
+```bash
+curl -X POST https://accounts.zoho.in/oauth/v2/token \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "client_secret=YOUR_CLIENT_SECRET" \
+  -d "grant_type=authorization_code" \
+  -d "redirect_uri=http://localhost:8000/api/auth/zoho/callback" \
+  -d "code=YOUR_GRANT_TOKEN"
+```
+The JSON response contains your permanent `refresh_token`.
 
-Per-member by default; admins can switch to the whole team and drill into anyone.
-Sends, delivery, opens, clicks, replies, sentiment split, bounce rate, per-stage reply
-rate (which touch actually earns the reply), time-to-first-reply, and an AI analyst
-read of the numbers with specific changes to make.
+### Step 4: Configure `.env`
+Add your Zoho credentials to `.env`:
+```ini
+ZOHO_CLIENT_ID="REDACTED"
+ZOHO_CLIENT_SECRET="REDACTED"
+ZOHO_REFRESH_TOKEN="REDACTED"
+ZOHO_AUTH_URL=https://accounts.zoho.in
+ZOHO_API_DOMAIN=https://www.zohoapis.in
+ZOHO_FROM_EMAIL=outreach@traininglobe.com
+ZOHO_DRY_RUN=false
+```
 
-Chart colours use the first three slots of the reference categorical palette,
-validated for both light and dark surfaces. Light-mode aqua falls just below the 3:1
-contrast line, so every chart ships a legend *and* a table view.
+> **Note on Dry-Run Mode**: Setting `ZOHO_DRY_RUN=true` allows safe testing with simulated CRM leads and dispatches without consuming API quotas or sending real emails.
 
 ---
 
-## Layout
+## 📡 REST API Summary
 
-```
-prisma/schema.prisma      data model (Postgres via Prisma 7 driver adapter)
-src/lib/ai/               groq client, rate limiter, model routing, agents, pipeline
-src/lib/email/            SMTP send, IMAP poll, tracking pixel + click rewriting
-src/lib/jobs/             the work queue: enqueue, atomic claim, handlers
-src/lib/analytics.ts      all statistics
-src/worker/               queue runner + cron: follow-ups, inbox polling, housekeeping
-src/app/(dashboard)/      the UI
-src/app/api/              REST API — enqueues, never executes
-scripts/                  operational checks (below)
-```
-
-## Checks
-
-```bash
-npm run typecheck
-```
-
-```bash
-npm run e2e
-```
-
-```bash
-npm run pagecheck
-```
-
-```bash
-npm run mailcheck
-```
-
-```bash
-npm run runs
-```
-
-- `typecheck` — tsc, no emit
-- `e2e` — full API walkthrough including a real agent cascade (~3 min). Deliberately
-  stops before approval, because approving sends a real email.
-- `pagecheck` — every dashboard route renders for a logged-in admin
-- `mailcheck` — verifies Gmail SMTP + IMAP credentials; sends nothing
-- `runs` — last 12 agent calls with models, tokens, latency and errors
-- `fallback-check` — confirms Gemini takes over on oversize prompts and never on search
-- `pollcheck` — times a real IMAP poll and shows the UID watermark
-- `jobs` — state of the work queue; the first thing to check when work seems stuck
-
-**Deploying: see [DEPLOYMENT.md](DEPLOYMENT.md).**
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/auth/login` | Authenticate and obtain JWT access token |
+| `GET` | `/api/auth/me` | Fetch authenticated user profile and permissions |
+| `GET` | `/api/reports/metrics` | Pipeline overview, reply rates, and funnel stats |
+| `GET` | `/api/approvals` | List drafts requiring mandatory human approval |
+| `POST` | `/api/approvals/{id}/approve` | **Admin approval gatekeeper** (dispatch or schedule) |
+| `POST` | `/api/approvals/{id}/edit` | Modify draft subject/body prior to approval |
+| `POST` | `/api/approvals/{id}/reject` | Reject draft with feedback & optional regeneration |
+| `POST` | `/api/approvals/{id}/reschedule` | Change scheduled delivery date & time |
+| `GET` | `/api/leads` | List leads (scoped by user role) with search/filter |
+| `POST` | `/api/leads` | Register target lead and kick off AI research |
+| `POST` | `/api/leads/import/csv` | Bulk import leads from CSV |
+| `POST` | `/api/leads/sync/zoho` | Synchronize leads directly from Zoho CRM |
+| `GET` | `/api/emails/thread/{lead_id}` | Retrieve complete conversation history |
+| `POST` | `/api/emails/inbound/webhook` | Process prospect replies & classify intent |
+| `GET` | `/api/settings/knowledge-base` | View verified facts for hallucination-free AI |
+| `POST` | `/api/settings/knowledge-base` | Add verified claim to AI grounding store |
+| `GET` | `/api/audit` | View immutable security audit trail |
 
 ---
 
-## Security notes
+## 🔒 Security & Compliance Assurance
 
-- Gmail app passwords are encrypted at rest with AES-256-GCM (`ENCRYPTION_KEY`) and
-  only decrypted at send time.
-- Sessions are HTTP-only signed JWT cookies. `middleware.ts` only checks that a cookie
-  exists — real authorisation happens server-side in every route via `requireUser()` /
-  `requireAdmin()`.
-- Members can only read and act on their own records; admins see everything. This is
-  enforced per route, not in the UI.
-- The click-tracking redirect only forwards to `http`/`https`, so it can't be used as
-  an open redirect to `javascript:`.
-- `.env` holds live secrets and is git-ignored. **The Groq API keys and the Gmail app
-  password currently in it were shared in chat — rotate them before this goes anywhere
-  real.**
-
-## Known limits
-
-- **The worker is not optional.** If it is down, drafts sit at "Waiting for the worker"
-  forever and no follow-up or reply is ever processed. `npm run jobs` shows the queue.
-- Open tracking undercounts (image blocking) and overcounts (mail-client prefetch).
-  Hits within 10s of sending are ignored, but treat opens as a trend, not a fact.
-- Gmail's own sending limits apply on top of the per-user daily cap.
-- Case-study files are stored in Postgres, capped at 15MB. That is the right call while
-  both hosts need to read them; if the library grows large, move to object storage.
-- The send path is exercised by unit-level checks but **no real mail has been sent from
-  this install yet** — do one test send to your own address before running a campaign.
-- Local dev uses PGlite, which is single-process. It is a faithful Postgres for
-  development but must never be used in production.
+- **Zero Unapproved Emails**: Dispatches without a valid `approved_by` user ID are rejected by backend assertions.
+- **CAN-SPAM Compliant**: Every email automatically incorporates physical office address and an unsubscribe mechanism.
+- **Opt-Out Suppression**: Instant addition to MongoDB suppression collection upon negative intent detection.
+- **Audit Logging**: Every action (approve, reject, edit, reschedule, send) generates an immutable, non-deletable audit entry.
