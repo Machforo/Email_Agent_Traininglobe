@@ -144,7 +144,7 @@ Manage This Delivery:
 - Send Immediately: {link_send_now}
 - Cancel Delivery: {link_cancel}
 
-Note: No action is needed if you want this message to go out as planned.
+Note: Scheduled emails are not sent automatically by the agent. Review and click 'Send Now' when you are ready to release this outreach.
 Each link requires authentication and will expire in 48 hours.
 """.strip()
 
@@ -221,7 +221,7 @@ Each link requires authentication and will expire in 48 hours.
       </div>
 
       <p style="margin: 0; font-size: 12px; color: #64748b; border-top: 1px solid #f1f5f9; padding-top: 16px;">
-        <strong>No action is needed</strong> if you want this email to go out automatically as planned.<br>
+        <strong>Manual Release Policy:</strong> Scheduled emails are not sent automatically by the agent. Review and click <strong>Send Now</strong> when ready to release this delivery.<br>
         Links require an authenticated Super Admin session and expire in 48 hours.
       </p>
     </div>

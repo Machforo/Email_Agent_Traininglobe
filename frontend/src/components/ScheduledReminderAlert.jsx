@@ -66,10 +66,10 @@ export default function ScheduledReminderAlert({
                 <span className="text-xs text-slate-500 font-medium">Scheduled Alert</span>
               </div>
               <h4 className="text-sm font-semibold text-slate-900 mt-1.5 leading-snug">
-                Email to <strong className="text-indigo-950 font-bold">{lead_name}</strong> ({lead_company}) goes out soon.
+                Email to <strong className="text-indigo-950 font-bold">{lead_name}</strong> ({lead_company}) is scheduled.
               </h4>
               <p className="text-xs text-slate-600 mt-1">
-                Scheduled delivery at <span className="font-semibold text-slate-800">{formatted_time || 'configured time'}</span>.
+                Target delivery: <span className="font-semibold text-slate-800">{formatted_time || 'configured time'}</span>. Click <strong>Send Now</strong> when ready to release.
               </p>
             </div>
           </div>

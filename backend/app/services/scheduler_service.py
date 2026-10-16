@@ -35,46 +35,13 @@ async def get_system_settings() -> Dict[str, Any]:
 
 
 async def check_scheduled_deliveries():
-    """Process emails queued with status 'Scheduled' whose scheduled_for is due."""
-    db = get_database()
-    if db is None:
-        return
-
-    now = datetime.datetime.now(datetime.timezone.utc)
-    config = await get_system_settings()
-
-    # Business hour check
-    current_hour = now.hour  # Simple UTC-relative or localized check
-    start_hour = config.get("business_hours_start", 9)
-    end_hour = config.get("business_hours_end", 19)
-
-    # Daily limit check
-    today_start = datetime.datetime.combine(datetime.date.today(), datetime.time.min, tzinfo=datetime.timezone.utc)
-    sent_today = await db.emails.count_documents({"status": "Sent", "sent_at": {"$gte": today_start}})
-    daily_limit = config.get("daily_send_limit", 100)
-
-    if sent_today >= daily_limit:
-        return  # Quota reached for today; will send during next window
-
-    # Find due scheduled emails
-    due_emails = await db.emails.find({
-        "status": "Scheduled",
-        "scheduled_for": {"$lte": now}
-    }).to_list(20)
-
-    for email_doc in due_emails:
-        try:
-            # System pseudo-user for background dispatch (preserves original approved_by)
-            approver = {
-                "id": email_doc.get("approved_by"),
-                "name": email_doc.get("approver_name", "Scheduled Admin")
-            }
-            # Set to Approved so delivery gate passes
-            await db.emails.update_one({"_id": email_doc["_id"]}, {"$set": {"status": "Approved"}})
-            await cancel_pending_reminder(str(email_doc["_id"]), reason="dispatched")
-            await send_approved_email(str(email_doc["_id"]), approver)
-        except Exception:
-            pass
+    """
+    CRITICAL POLICY: Scheduled emails are NEVER automatically dispatched by the background agent.
+    All scheduled outreach remains staged in the delivery queue until an authorized Super Admin
+    explicitly triggers release via 'Send Now' (from Scheduled Queue, Dashboard, or Reminder email link).
+    """
+    # Auto-dispatch disabled by governance policy: no automatic background email release
+    return
 
 
 async def check_followup_cadence():
@@ -165,7 +132,8 @@ async def check_followup_cadence():
 
 
 def start_scheduler():
-    scheduler.add_job(check_scheduled_deliveries, "interval", minutes=1, id="check_scheduled")
+    # Note: Automatic sending of scheduled emails is disabled.
+    # Scheduled emails require explicit manual release ("Send Now") by an admin.
     scheduler.add_job(check_followup_cadence, "interval", minutes=5, id="check_followups")
     scheduler.add_job(process_due_reminders, "interval", minutes=1, id="process_reminders")
     scheduler.start()

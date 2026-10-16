@@ -532,7 +532,7 @@ export default function Settings() {
               </div>
 
               <p className="text-[11px] text-slate-600 leading-relaxed">
-                Super Admins are warned before approved emails are sent, via reminder email and real-time dashboard alerts, allowing time to reschedule, cancel, or dispatch immediately.
+                Super Admins receive advance warnings before scheduled target times. In accordance with zero-unauthorized-delivery governance, scheduled emails are never sent automatically by the agent and require explicit manual release ('Send Now').
               </p>
 
               {settingsForm.reminder_enabled && (
