@@ -64,6 +64,9 @@ class EmailResponse(BaseModel):
     reminder_status: Optional[str] = None  # pending | sent | skipped | failed | cancelled
     reminder_retry_count: int = 0
     reminder_error: Optional[str] = None
+    flagged_for_review: bool = False
+    review_reason: Optional[str] = None
+    service_line: Optional[str] = None
     created_at: Optional[datetime.datetime] = None
 
 
@@ -73,6 +76,10 @@ class ApprovalQueueItem(BaseModel):
     lead_email: str
     company_name: str
     company_website: Optional[str] = None
+    owner_id: Optional[str] = None
+    owner_name: Optional[str] = None
+    approved_by: Optional[str] = None
+    approver_name: Optional[str] = None
     research_summary: Optional[str] = None
     sources: List[str] = Field(default_factory=list)
     thread_history: List[EmailResponse] = Field(default_factory=list)

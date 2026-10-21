@@ -13,7 +13,7 @@ from app.models.email import (
     EmailResponse,
 )
 from app.services.delivery_service import send_approved_email
-from app.services.ai_service import draft_first_email
+from app.services.ai_service import draft_first_email, draft_followup_email, draft_reply_email, generate_first_outreach_mock
 from app.core.audit import log_audit_event
 from app.services.reminder_service import (
     compute_reminder_at,
@@ -35,14 +35,21 @@ async def get_approval_queue(
     db = get_database()
     lead_scope = get_user_scope_filter(current_user)
 
-    # Find leads owned by current user (or all if super admin)
-    accessible_leads = await db.leads.find(lead_scope, {"_id": 1, "name": 1, "email": 1, "company_name": 1, "company_website": 1}).to_list(500)
+    # Find leads accessible via central scoping helper (all leads for both Super Admin and Staff Admin)
+    accessible_leads = await db.leads.find(
+        lead_scope,
+        {"_id": 1, "name": 1, "email": 1, "company_name": 1, "company_website": 1, "owner_id": 1}
+    ).to_list(500)
     lead_map = {str(l["_id"]): l for l in accessible_leads}
 
     if not lead_map:
         return []
 
     lead_ids = list(lead_map.keys())
+
+    # Resolve owner names from users collection
+    user_docs = await db.users.find({}, {"_id": 1, "name": 1}).to_list(200)
+    user_name_map = {str(u["_id"]): u.get("name", "Unknown") for u in user_docs}
 
     # Find drafts in Draft Ready status
     drafts_cursor = db.emails.find({
@@ -65,12 +72,21 @@ async def get_approval_queue(
         thread_emails_cursor = db.emails.find({"lead_id": lead_id, "status": {"$ne": "Draft Ready"}}).sort("created_at", 1)
         thread_history = [serialize_doc(m) async for m in thread_emails_cursor]
 
+        owner_id_val = str(lead_info.get("owner_id") or "")
+        owner_name_val = user_name_map.get(owner_id_val, "Unassigned")
+        approver_id_val = str(d.get("approved_by") or "")
+        approver_name_val = d.get("approver_name") or user_name_map.get(approver_id_val)
+
         item = {
             "draft": serialize_doc(d),
             "lead_name": lead_info.get("name", "Unknown"),
             "lead_email": lead_info.get("email", ""),
             "company_name": lead_info.get("company_name", ""),
             "company_website": lead_info.get("company_website"),
+            "owner_id": owner_id_val or None,
+            "owner_name": owner_name_val,
+            "approved_by": approver_id_val or None,
+            "approver_name": approver_name_val,
             "research_summary": research_summary,
             "sources": sources,
             "thread_history": thread_history
@@ -78,6 +94,61 @@ async def get_approval_queue(
         queue_items.append(item)
 
     return queue_items
+
+
+@router.post("/cancel-all-overdue")
+async def cancel_all_overdue(
+    current_user: Dict[str, Any] = Depends(require_permission("approvals:write"))
+):
+    """
+    Super Admin only: Cancel all overdue scheduled deliveries.
+    Moves overdue items from 'Scheduled' to 'Rejected' with audit trail.
+    """
+    if current_user.get("role") != "SUPER_ADMIN":
+        raise HTTPException(status_code=403, detail="Super Admin role required to cancel all overdue emails")
+
+    db = get_database()
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    # Find overdue scheduled emails (scheduled_for in the past)
+    overdue_emails = await db.emails.find({
+        "status": "Scheduled",
+        "scheduled_for": {"$lt": now}
+    }).to_list(300)
+
+    cancelled_ids = []
+    for item in overdue_emails:
+        item_id = item["_id"]
+        await db.emails.update_one(
+            {"_id": item_id},
+            {
+                "$set": {
+                    "status": "Rejected",
+                    "rejection_reason": "Cancelled all overdue by Super Admin",
+                    "updated_at": now
+                }
+            }
+        )
+        await cancel_pending_reminder(str(item_id), reason="cancelled_overdue")
+        cancelled_ids.append(str(item_id))
+
+    await log_audit_event(
+        user=current_user,
+        action="CANCEL_ALL_OVERDUE_EMAILS",
+        entity_type="EMAIL_BATCH",
+        entity_id="overdue_batch",
+        details={
+            "count": len(cancelled_ids),
+            "cancelled_ids": cancelled_ids
+        }
+    )
+
+    return {
+        "success": True,
+        "cancelled_count": len(cancelled_ids),
+        "cancelled_ids": cancelled_ids,
+        "message": f"Successfully cancelled {len(cancelled_ids)} overdue scheduled deliveries."
+    }
 
 
 @router.post("/{draft_id}/approve", response_model=EmailResponse)
@@ -101,6 +172,20 @@ async def approve_draft(
         lead = await db.leads.find_one({"_id": ObjectId(draft["lead_id"])})
         if not lead or lead.get("owner_id") != current_user["id"]:
             raise HTTPException(status_code=403, detail="Not authorized to approve this lead's draft")
+
+    # Hard guard: Never approve a draft with an empty body
+    if not draft.get("body") or not draft.get("body").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot approve a draft with an empty body. Please edit or regenerate the draft content first."
+        )
+
+    # Disallow direct Send Now on already scheduled emails
+    if draft.get("status") == "Scheduled" and send_now:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Direct 'Send Now' is disabled for scheduled deliveries. Scheduled emails are automatically dispatched at their scheduled time."
+        )
 
     now = datetime.datetime.now(datetime.timezone.utc)
 
@@ -179,6 +264,9 @@ async def edit_draft(
 
     old_subject = draft.get("subject", "")
     old_body = draft.get("body", "")
+
+    if not req.body.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Draft body cannot be empty.")
 
     updates = {
         "subject": req.subject.strip(),
@@ -262,7 +350,10 @@ async def reject_draft(
             "status": "Draft Ready",
             "subject": new_draft_content["subject"],
             "body": new_draft_content["body"],
-            "confidence_score": 0.92,
+            "confidence_score": new_draft_content.get("confidence_score", 0.92),
+            "flagged_for_review": new_draft_content.get("flagged_for_review", False),
+            "review_reason": new_draft_content.get("review_reason"),
+            "service_line": new_draft_content.get("service_line"),
             "rejection_reason": None,
             "created_at": now
         }
@@ -334,3 +425,19 @@ async def reschedule_draft(
 
     updated = await db.emails.find_one({"_id": ObjectId(draft_id)})
     return serialize_doc(updated)
+
+
+@router.post("/{draft_id}/send-now")
+async def scheduled_send_now_disabled(draft_id: str):
+    """
+    Direct Send Now on scheduled emails is permanently removed.
+    Scheduled emails are automatically dispatched by the background worker at their scheduled time.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Direct 'Send Now' is disabled for scheduled deliveries. Scheduled emails are automatically dispatched at their scheduled time."
+    )
+
+
+
+

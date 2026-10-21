@@ -244,6 +244,16 @@ export default function LeadDetailModal({ lead, onClose, onLeadUpdated }) {
                       <Building className="h-4 w-4 text-slate-400" />
                       <span>{companyName}</span>
                     </div>
+                    <div className="flex items-center gap-2.5 text-slate-700 pt-1 border-t border-slate-100">
+                      <User className="h-4 w-4 text-slate-400" />
+                      <span>Lead Owner: <strong className="text-slate-800">{currentLead.owner_name || 'Unassigned'}</strong></span>
+                    </div>
+                    {currentLead.approver_name && (
+                      <div className="flex items-center gap-2.5 text-slate-700">
+                        <CheckCircle className="h-4 w-4 text-emerald-500" />
+                        <span>Approved by: <strong className="text-slate-800">{currentLead.approver_name}</strong></span>
+                      </div>
+                    )}
                   </div>
                 </div>
 

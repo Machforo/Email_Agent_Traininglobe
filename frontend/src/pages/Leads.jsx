@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Users,
   Search,
@@ -17,6 +17,7 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  User,
 } from 'lucide-react';
 import { api } from '../services/api';
 import PageHeader from '../components/PageHeader';
@@ -51,8 +52,13 @@ export default function Leads() {
   const { can, isReadOnly } = usePermissions();
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const inFlightRef = useRef(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [ownerFilter, setOwnerFilter] = useState('ALL');
+  const [myLeads, setMyLeads] = useState(false);
+  const [usersList, setUsersList] = useState([]);
   const [selectedLead, setSelectedLead] = useState(null);
 
   // Pagination
@@ -85,21 +91,36 @@ export default function Leads() {
   const [syncingZoho, setSyncingZoho] = useState(false);
   const [notification, setNotification] = useState(null);
 
+  // Load team users for owner filter
+  useEffect(() => {
+    api.listUsers()
+      .then((data) => {
+        if (Array.isArray(data)) setUsersList(data);
+      })
+      .catch((err) => console.error('Failed to load users for filter:', err));
+  }, []);
+
   useEffect(() => {
     fetchLeads();
-  }, [statusFilter]);
+  }, [statusFilter, ownerFilter, myLeads]);
 
   const fetchLeads = async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     try {
       setLoading(true);
+      setError(null);
       const filter = statusFilter === 'ALL' ? null : statusFilter;
-      const data = await api.listLeads(filter, search);
+      const ownerParam = myLeads ? 'me' : (ownerFilter === 'ALL' ? null : ownerFilter);
+      const data = await api.listLeads(filter, search, ownerParam, myLeads);
       setLeads(data || []);
       setCurrentPage(1);
     } catch (err) {
       console.error('Failed to load leads:', err);
+      setError(err.message || "We couldn't load your leads. Please try again.");
     } finally {
       setLoading(false);
+      inFlightRef.current = false;
     }
   };
 
@@ -108,15 +129,20 @@ export default function Leads() {
     fetchLeads();
   };
 
-  // Status counts for filter pills
+  // Status counts for filter pills (displays '—' while in error state to avoid false zeroes)
   const statusCounts = useMemo(() => {
+    if (error) {
+      const counts = { ALL: '—' };
+      STATUS_FILTERS.forEach((st) => { counts[st] = '—'; });
+      return counts;
+    }
     const counts = { ALL: leads.length };
     leads.forEach((l) => {
       const st = l.status || 'New Lead';
       counts[st] = (counts[st] || 0) + 1;
     });
     return counts;
-  }, [leads]);
+  }, [leads, error]);
 
   // Paginated records
   const filteredLeads = useMemo(() => {
@@ -311,18 +337,72 @@ export default function Leads() {
         }
       />
 
-      {/* Search Bar and Horizontally Scrollable Status Pills */}
+      {/* Search Bar, Owner Filter, My Leads Toggle, and Horizontally Scrollable Status Pills */}
       <div className="space-y-3">
-        <form onSubmit={handleSearchSubmit} className="relative max-w-md">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by contact name, company, or email..."
-            className="w-full rounded-lg border border-slate-300 bg-white pl-9.5 pr-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-3 focus:ring-indigo-100"
-          />
-        </form>
+        <div className="flex flex-wrap items-center gap-3">
+          <form onSubmit={handleSearchSubmit} className="relative flex-1 min-w-[240px] max-w-md">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by contact name, company, or email..."
+              className="w-full rounded-lg border border-slate-300 bg-white pl-9.5 pr-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-3 focus:ring-indigo-100"
+            />
+          </form>
+
+          {/* Owner Filter Dropdown */}
+          <div className="flex items-center gap-2">
+            <label htmlFor="owner-filter-select" className="text-xs font-medium text-slate-600 whitespace-nowrap">
+              Owner:
+            </label>
+            <select
+              id="owner-filter-select"
+              value={ownerFilter}
+              onChange={(e) => {
+                const val = e.target.value;
+                setOwnerFilter(val);
+                if (val !== 'me') {
+                  setMyLeads(false);
+                } else {
+                  setMyLeads(true);
+                }
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-100 shadow-2xs"
+            >
+              <option value="ALL">All Owners</option>
+              <option value="me">Assigned to Me</option>
+              {usersList.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name || u.email}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* My Leads Toggle */}
+          <button
+            type="button"
+            id="my-leads-toggle-btn"
+            onClick={() => {
+              const nextState = !myLeads;
+              setMyLeads(nextState);
+              if (nextState) {
+                setOwnerFilter('me');
+              } else {
+                setOwnerFilter('ALL');
+              }
+            }}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition border ${
+              myLeads || ownerFilter === 'me'
+                ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <User className="h-3.5 w-3.5" />
+            <span>My leads</span>
+          </button>
+        </div>
 
         {/* Status Filters: 8px gaps, horizontal scroll, counts */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1 no-scrollbar">
@@ -357,9 +437,41 @@ export default function Leads() {
       {/* Leads Table Container */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-slate-400 text-sm">
-            <RefreshCw className="h-5 w-5 animate-spin mr-2 text-indigo-600" />
-            Loading lead records...
+          <div className="p-6 space-y-4">
+            <div className="flex items-center gap-2 text-xs text-slate-500 font-medium mb-3">
+              <RefreshCw className="h-3.5 w-3.5 animate-spin text-indigo-600" />
+              <span>Loading lead records...</span>
+            </div>
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="flex items-center gap-4 py-3.5 animate-pulse border-b border-slate-100 last:border-0">
+                <div className="h-9 w-9 rounded-lg bg-slate-100 shrink-0" />
+                <div className="space-y-1.5 flex-1 min-w-0">
+                  <div className="h-3.5 w-44 bg-slate-200 rounded" />
+                  <div className="h-2.5 w-28 bg-slate-100 rounded" />
+                </div>
+                <div className="h-3 w-40 bg-slate-100 rounded hidden sm:block" />
+                <div className="h-6 w-20 bg-slate-200 rounded-full shrink-0" />
+                <div className="h-3.5 w-24 bg-slate-100 rounded hidden md:block" />
+              </div>
+            ))}
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+            <div className="h-12 w-12 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-500 mb-3 shadow-xs">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-semibold text-slate-900 mb-1">We couldn't load your leads</h3>
+            <p className="text-xs text-slate-500 max-w-sm mb-4 leading-relaxed">
+              {error}
+            </p>
+            <button
+              type="button"
+              onClick={fetchLeads}
+              className="btn-primary text-xs inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>Try Again</span>
+            </button>
           </div>
         ) : filteredLeads.length === 0 ? (
           <EmptyState
@@ -383,6 +495,7 @@ export default function Leads() {
                   <th className="py-3.5 px-4">Email</th>
                   <th className="py-3.5 px-4">Lifecycle Status</th>
                   <th className="py-3.5 px-4">Cadence</th>
+                  <th className="py-3.5 px-4">Owner</th>
                   <th className="py-3.5 px-4">Next Action</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
@@ -439,6 +552,20 @@ export default function Leads() {
                           {lead.research_summary && (
                             <span className="flex items-center gap-1 text-[10px] text-indigo-600 font-medium">
                               <Sparkles className="h-2.5 w-2.5" /> AI Researched
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Owner & Approved By */}
+                      <td className="py-3.5 px-4 text-slate-600">
+                        <div className="space-y-0.5">
+                          <span className="font-semibold text-slate-800 block">
+                            {lead.owner_name || 'Unassigned'}
+                          </span>
+                          {lead.approver_name && (
+                            <span className="text-[10px] text-emerald-600 font-medium block">
+                              Approved by {lead.approver_name}
                             </span>
                           )}
                         </div>

@@ -35,6 +35,7 @@ async def login(req: LoginRequest):
         raise HTTPException(status_code=400, detail="Account is disabled")
 
     user_data = serialize_doc(user)
+    user_data.pop("password_hash", None)
     role = user_data.get("role", "ADMIN")
     user_data["permissions"] = get_user_permissions(role)
     user_data["is_read_only"] = is_role_read_only(role)
@@ -54,14 +55,15 @@ async def get_me(current_user: Dict[str, Any] = Depends(get_current_user)):
 
 @router.get("/users", response_model=List[UserResponse])
 async def list_users(
-    current_user: Dict[str, Any] = Depends(require_permission("users:manage"))
+    current_user: Dict[str, Any] = Depends(require_permission("users:read"))
 ):
-    """Super Admin only: List all team users."""
+    """List all team users (read-only for Staff Admin, manage for Super Admin)."""
     db = get_database()
     users = await db.users.find().to_list(100)
     results = []
     for u in users:
         u_data = serialize_doc(u)
+        u_data.pop("password_hash", None)
         u_role = u_data.get("role", "ADMIN")
         u_data["permissions"] = get_user_permissions(u_role)
         u_data["is_read_only"] = is_role_read_only(u_role)

@@ -83,12 +83,12 @@ def can_transition(current: str, target: str) -> bool:
 
 
 class LeadBase(BaseModel):
-    name: str
-    email: EmailStr
-    company_name: str
+    name: Optional[str] = "Unknown"
+    email: Optional[str] = "unknown@domain.com"
+    company_name: Optional[str] = "Unknown Company"
     company_website: Optional[str] = None
     owner_id: Optional[str] = None
-    source: str = "MANUAL"  # "ZOHO_CRM" | "CSV_IMPORT" | "MANUAL"
+    source: Optional[str] = "MANUAL"  # "ZOHO_CRM" | "CSV_IMPORT" | "MANUAL"
     extra_fields: Dict[str, Any] = Field(default_factory=dict)
     company: Optional[str] = None
     first_name: Optional[str] = None
@@ -125,10 +125,12 @@ class LeadResponse(LeadBase):
     owner_name: Optional[str] = None
     followup_count: int = 0
     max_followups: int = 3
-    next_action_at: Optional[datetime.datetime] = None
-    preferred_contact_date: Optional[datetime.date] = None
-    created_at: Optional[datetime.datetime] = None
-    updated_at: Optional[datetime.datetime] = None
+    next_action_at: Optional[Any] = None
+    preferred_contact_date: Optional[Any] = None
+    created_at: Optional[Any] = None
+    updated_at: Optional[Any] = None
     zoho_lead_id: Optional[str] = None
     research_summary: Optional[str] = None
+    approved_by: Optional[str] = None
+    approver_name: Optional[str] = None
 

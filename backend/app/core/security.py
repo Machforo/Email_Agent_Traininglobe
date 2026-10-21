@@ -26,6 +26,7 @@ PERMISSIONS_MAP = {
         "settings:read",
         "settings:write",
         "audit:read",
+        "users:read",
         "users:manage",
         "notifications:read",
         "notifications:write",
@@ -36,7 +37,9 @@ PERMISSIONS_MAP = {
         "approvals:read",
         "emails:read",
         "knowledge:read",
+        "settings:read",
         "audit:read",
+        "users:read",
         "notifications:read",
     ],
     "STAFF_ADMIN": [
@@ -45,7 +48,9 @@ PERMISSIONS_MAP = {
         "approvals:read",
         "emails:read",
         "knowledge:read",
+        "settings:read",
         "audit:read",
+        "users:read",
         "notifications:read",
     ],
 }
@@ -109,19 +114,21 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise HTTPException(status_code=400, detail="Inactive user account")
 
     user_dict = serialize_doc(user)
+    # Guarantee password hash is never exposed
+    user_dict.pop("password_hash", None)
     role = user_dict.get("role", "ADMIN")
     user_dict["permissions"] = get_user_permissions(role)
     user_dict["is_read_only"] = is_role_read_only(role)
     return user_dict
 
 
-def require_permission(required_perm: str):
+def require_permission(required_perm: str, allow_read_only_post: bool = False):
     """
     Central Permission Enforcement Dependency.
     Checks the role & permissions from the verified JWT on every request.
-    Enforces that Staff Admin (is_read_only=True) can only perform GET (read) actions.
-    Every write attempt (POST/PUT/PATCH/DELETE) returns 403 with:
-    'Read-only access: your role cannot perform this action' and is logged as ACCESS_DENIED.
+    Enforces that Staff Admin (is_read_only=True) can only perform GET (read) actions,
+    unless allow_read_only_post=True for read-like POST endpoints (such as preview generation).
+    Every unauthorized write attempt returns 403.
     """
     async def permission_dependency(
         request: Request,
@@ -129,6 +136,8 @@ def require_permission(required_perm: str):
     ) -> Dict[str, Any]:
         user_perms = current_user.get("permissions", [])
         is_write = request.method in ["POST", "PUT", "PATCH", "DELETE"]
+        if allow_read_only_post and request.method == "POST":
+            is_write = False
         is_read_only = current_user.get("is_read_only", False)
 
         if (is_read_only and is_write) or (required_perm not in user_perms):
@@ -190,13 +199,15 @@ async def require_super_admin(
 
 def get_user_scope_filter(current_user: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Role-Based Query Filter:
-    - Super Admin can query and access all records.
-    - Staff Admin can ONLY query records assigned to them (owner_id == user.id).
+    Central Role-Based Read Scoping Helper:
+    - Super Admin can query and access all records org-wide.
+    - Staff Admin (Staff Rep) is a full READ-ONLY MIRROR of Super Admin,
+      with identical visibility across all pages and endpoints.
+    - Returns {} so every read endpoint retrieves the complete dataset.
+    - Explicit narrowing (such as 'My Leads' toggle or 'Owner' filter) is
+      handled via dedicated query parameters on endpoints rather than hard scoping.
     """
-    if current_user.get("role") == "SUPER_ADMIN":
-        return {}
-    return {"owner_id": current_user["id"]}
+    return {}
 
 
 def create_action_token(email_id: str, action: str, expires_in_minutes: int = 2880) -> str:

@@ -41,10 +41,10 @@ def test_rbac_super_admin_scope():
 
 
 def test_rbac_admin_scope_enforcement():
-    """Admin query filter must restrict access strictly to their assigned owner_id."""
+    """Staff Admin (ADMIN role) has an empty filter for a full read-only mirror of Super Admin."""
     admin_user = {"id": "admin_456", "role": "ADMIN", "name": "Sales Rep"}
     scope = get_user_scope_filter(admin_user)
-    assert scope == {"owner_id": "admin_456"}
+    assert scope == {}
 
 
 # ------------------------------------------------------------------------------

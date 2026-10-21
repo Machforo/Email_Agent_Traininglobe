@@ -13,6 +13,7 @@ from app.services.reminder_service import cancel_pending_reminder
 
 UNSUBSCRIBE_FOOTER = (
     "\n\n---\n"
+    "Traininglobe Consultancy Pvt. Ltd. | Global Digital Transformation & AI Enablement\n"
     "If you prefer not to receive further updates or training insights from Traininglobe, "
     "reply with 'unsubscribe' or click here to opt out."
 )
@@ -50,6 +51,10 @@ async def send_approved_email(draft_id: str, approver_user: Dict[str, Any]) -> D
             f"SECURITY VIOLATION: Refusing to dispatch email {draft_id}. "
             "Missing mandatory human approver ID."
         )
+
+    # 4. HARD ENFORCEMENT: Non-empty body check
+    if not draft.get("body") or not draft.get("body").strip():
+        raise ValueError(f"REFUSING DISPATCH: Draft {draft_id} has an empty body.")
 
     # Get lead details
     lead = await db.leads.find_one({"_id": ObjectId(draft["lead_id"])})

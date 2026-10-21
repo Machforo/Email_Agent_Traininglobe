@@ -33,13 +33,6 @@ async def list_notifications(
     if unread_only:
         query["read_at"] = None
 
-    # Role scoping for Staff Admin
-    if current_user.get("role") != "SUPER_ADMIN":
-        # Find leads assigned to this staff rep
-        lead_cursor = db.leads.find({"owner_id": current_user["id"]}, {"_id": 1})
-        lead_ids = [str(l["_id"]) async for l in lead_cursor]
-        query["lead_id"] = {"$in": lead_ids}
-
     cursor = db.notifications.find(query).sort("created_at", -1).limit(limit)
     items = await cursor.to_list(limit)
     return [serialize_doc(item) for item in items]
@@ -48,9 +41,9 @@ async def list_notifications(
 @router.post("/{notification_id}/read")
 async def mark_notification_read(
     notification_id: str,
-    current_user: Dict[str, Any] = Depends(require_permission("notifications:read")),
+    current_user: Dict[str, Any] = Depends(require_permission("notifications:write")),
 ):
-    """Mark a notification as read."""
+    """Mark a notification as read (Super Admin only; Staff Admin is read-only)."""
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection unavailable")
@@ -69,9 +62,9 @@ async def mark_notification_read(
 @router.post("/{notification_id}/dismiss")
 async def dismiss_notification(
     notification_id: str,
-    current_user: Dict[str, Any] = Depends(require_permission("notifications:read")),
+    current_user: Dict[str, Any] = Depends(require_permission("notifications:write")),
 ):
-    """Dismiss a notification alert from the active pop-up list."""
+    """Dismiss a notification alert from the active pop-up list (Super Admin only; Staff Admin is read-only)."""
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection unavailable")
@@ -89,20 +82,15 @@ async def dismiss_notification(
 
 @router.post("/read-all")
 async def mark_all_notifications_read(
-    current_user: Dict[str, Any] = Depends(require_permission("notifications:read")),
+    current_user: Dict[str, Any] = Depends(require_permission("notifications:write")),
 ):
-    """Mark all active notifications as read for current user."""
+    """Mark all active notifications as read (Super Admin only; Staff Admin is read-only)."""
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection unavailable")
 
     now = datetime.datetime.now(datetime.timezone.utc)
     query: Dict[str, Any] = {"is_active": True, "read_at": None}
-
-    if current_user.get("role") != "SUPER_ADMIN":
-        lead_cursor = db.leads.find({"owner_id": current_user["id"]}, {"_id": 1})
-        lead_ids = [str(l["_id"]) async for l in lead_cursor]
-        query["lead_id"] = {"$in": lead_ids}
 
     res = await db.notifications.update_many(query, {"$set": {"read_at": now}})
     return {"success": True, "modified_count": res.modified_count}

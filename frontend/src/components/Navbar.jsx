@@ -52,7 +52,7 @@ export default function Navbar({
     { id: 'approvals', label: 'Approvals', icon: CheckCircle2, badge: pendingCount },
     { id: 'leads', label: 'Leads', icon: Users },
     { id: 'scheduled', label: 'Scheduled', icon: Clock },
-    { id: 'settings', label: isSuperAdmin ? 'Knowledge & Rules' : 'Knowledge', icon: SettingsIcon },
+    { id: 'settings', label: 'Knowledge & Rules', icon: SettingsIcon },
     { id: 'audit', label: 'Audit Trail', icon: ShieldCheck },
   ];
 
@@ -141,7 +141,7 @@ export default function Navbar({
                       </span>
                     )}
                   </div>
-                  {unreadNotificationsCount > 0 && onMarkAllNotificationsRead && (
+                  {unreadNotificationsCount > 0 && onMarkAllNotificationsRead && !isReadOnly && (
                     <button
                       type="button"
                       onClick={() => {

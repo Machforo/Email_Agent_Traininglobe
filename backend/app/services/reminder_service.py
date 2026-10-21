@@ -115,12 +115,10 @@ async def build_reminder_email_content(
     app_base_url = os.getenv("APP_URL", "http://localhost:5173")
     token_review = create_action_token(email_id, "review")
     token_reschedule = create_action_token(email_id, "reschedule")
-    token_send_now = create_action_token(email_id, "send_now")
     token_cancel = create_action_token(email_id, "cancel")
 
     link_review = f"{app_base_url}/scheduled?email_id={email_id}&action=review&token={token_review}"
     link_reschedule = f"{app_base_url}/scheduled?email_id={email_id}&action=reschedule&token={token_reschedule}"
-    link_send_now = f"{app_base_url}/scheduled?email_id={email_id}&action=send_now&token={token_send_now}"
     link_cancel = f"{app_base_url}/scheduled?email_id={email_id}&action=cancel&token={token_cancel}"
 
     plain_text = f"""
@@ -141,10 +139,9 @@ Message Preview:
 Manage This Delivery:
 - Review in Scheduled Queue: {link_review}
 - Reschedule Time: {link_reschedule}
-- Send Immediately: {link_send_now}
 - Cancel Delivery: {link_cancel}
 
-Note: Scheduled emails are not sent automatically by the agent. Review and click 'Send Now' when you are ready to release this outreach.
+Note: Approved emails are sent automatically at the scheduled time. You can reschedule or cancel them before then.
 Each link requires authentication and will expire in 48 hours.
 """.strip()
 
@@ -204,16 +201,13 @@ Each link requires authentication and will expire in 48 hours.
         <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 10px;">Take Action:</div>
         <table style="width: 100%; border-collapse: separate; border-spacing: 8px 0;">
           <tr>
-            <td style="width: 25%; text-align: center;">
-              <a href="{link_review}" style="display: block; background-color: #4f46e5; color: #ffffff; text-decoration: none; padding: 9px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;">Review in Scheduled Queue</a>
+            <td style="width: 33%; text-align: center;">
+              <a href="{link_review}" style="display: block; background-color: #4f46e5; color: #ffffff; text-decoration: none; padding: 9px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;">Review in Queue</a>
             </td>
-            <td style="width: 25%; text-align: center;">
+            <td style="width: 33%; text-align: center;">
               <a href="{link_reschedule}" style="display: block; background-color: #6366f1; color: #ffffff; text-decoration: none; padding: 9px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;">Reschedule</a>
             </td>
-            <td style="width: 25%; text-align: center;">
-              <a href="{link_send_now}" style="display: block; background-color: #059669; color: #ffffff; text-decoration: none; padding: 9px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;">Send Now</a>
-            </td>
-            <td style="width: 25%; text-align: center;">
+            <td style="width: 33%; text-align: center;">
               <a href="{link_cancel}" style="display: block; background-color: #e11d48; color: #ffffff; text-decoration: none; padding: 9px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;">Cancel Send</a>
             </td>
           </tr>
@@ -221,7 +215,7 @@ Each link requires authentication and will expire in 48 hours.
       </div>
 
       <p style="margin: 0; font-size: 12px; color: #64748b; border-top: 1px solid #f1f5f9; padding-top: 16px;">
-        <strong>Manual Release Policy:</strong> Scheduled emails are not sent automatically by the agent. Review and click <strong>Send Now</strong> when ready to release this delivery.<br>
+        <strong>Automatic Delivery Notice:</strong> Approved emails are sent automatically at the scheduled time. You can reschedule or cancel them before then.<br>
         Links require an authenticated Super Admin session and expire in 48 hours.
       </p>
     </div>

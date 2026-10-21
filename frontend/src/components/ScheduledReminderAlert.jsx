@@ -17,12 +17,10 @@ export default function ScheduledReminderAlert({
   onDismiss,
   onView,
   onReschedule,
-  onSendNow,
   onCancelSend,
   actionLoading = false,
 }) {
   const { isReadOnly } = usePermissions();
-  const [confirmSendNow, setConfirmSendNow] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [rescheduleDateTime, setRescheduleDateTime] = useState('');
@@ -69,7 +67,7 @@ export default function ScheduledReminderAlert({
                 Email to <strong className="text-indigo-950 font-bold">{lead_name}</strong> ({lead_company}) is scheduled.
               </h4>
               <p className="text-xs text-slate-600 mt-1">
-                Target delivery: <span className="font-semibold text-slate-800">{formatted_time || 'configured time'}</span>. Click <strong>Send Now</strong> when ready to release.
+                Target delivery: <span className="font-semibold text-slate-800">{formatted_time || 'configured time'}</span>. Automatically sends at target time unless rescheduled or cancelled.
               </p>
             </div>
           </div>
@@ -112,16 +110,6 @@ export default function ScheduledReminderAlert({
 
               <button
                 type="button"
-                onClick={() => setConfirmSendNow(true)}
-                disabled={actionLoading}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-xs font-semibold text-white hover:bg-emerald-700 transition shadow-2xs"
-              >
-                <Send className="h-3.5 w-3.5" />
-                <span>Send Now</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => setConfirmCancel(true)}
                 disabled={actionLoading}
                 title="Cancel this scheduled delivery"
@@ -134,23 +122,6 @@ export default function ScheduledReminderAlert({
           )}
         </div>
       </div>
-
-      {/* Confirmation Modal: Send Now */}
-      <ConfirmDialog
-        isOpen={confirmSendNow}
-        title="Send Scheduled Email Immediately?"
-        message={`Are you sure you want to bypass the scheduled window and send this email immediately to ${lead_name}?`}
-        confirmText="Send Now"
-        cancelText="Keep Scheduled"
-        type="success"
-        loading={actionLoading}
-        onConfirm={async () => {
-          await onSendNow(scheduled_email_id);
-          setConfirmSendNow(false);
-          onDismiss(id);
-        }}
-        onCancel={() => setConfirmSendNow(false)}
-      />
 
       {/* Confirmation Modal: Cancel Delivery */}
       <ConfirmDialog

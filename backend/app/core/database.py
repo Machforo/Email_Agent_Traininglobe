@@ -1,4 +1,5 @@
 from typing import Any, Dict
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.core.config import settings
 
@@ -41,15 +42,21 @@ def get_database() -> AsyncIOMotorDatabase:
 
 
 def serialize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert Mongo ObjectId _id to string id for API responses."""
+    """Convert Mongo ObjectId _id to string id and all ObjectIds to string for API responses."""
     if not doc:
         return doc
     res = dict(doc)
     if "_id" in res:
         res["id"] = str(res.pop("_id"))
-    for k, v in res.items():
-        if isinstance(v, dict):
+    for k, v in list(res.items()):
+        if isinstance(v, ObjectId):
+            res[k] = str(v)
+        elif isinstance(v, dict):
             res[k] = serialize_doc(v)
         elif isinstance(v, list):
-            res[k] = [serialize_doc(item) if isinstance(item, dict) else item for item in v]
+            res[k] = [
+                serialize_doc(item) if isinstance(item, dict)
+                else (str(item) if isinstance(item, ObjectId) else item)
+                for item in v
+            ]
     return res

@@ -7,7 +7,7 @@ from app.core.database import get_database, serialize_doc
 from app.core.security import get_user_scope_filter, require_permission
 from app.models.email import EmailResponse, InboundEmailWebhook
 from app.models.lead import LeadStatus
-from app.services.ai_service import classify_reply_intent, draft_followup_email
+from app.services.ai_service import classify_reply_intent, draft_followup_email, draft_reply_email, generate_reply_mock
 from app.services.zoho_service import update_zoho_lead_status
 from app.core.audit import log_audit_event
 
@@ -149,13 +149,24 @@ async def handle_inbound_reply(
 
     # 5. Draft next response (if not opted out)
     if new_lead_status != LeadStatus.OPTED_OUT.value:
-        next_subject = payload.subject if payload.subject.lower().startswith("re:") else f"Re: {payload.subject}"
-        next_body = (
-            f"Hi {lead['name'].split()[0]},\n\n"
-            f"Thank you for getting back to me regarding {detected_intent.lower()}.\n\n"
-            f"We would be delighted to coordinate next steps. Would you have 15 minutes open later this week?\n\n"
-            f"Best regards,\nTraininglobe Outreach Team"
+        reply_content = await draft_reply_email(
+            lead=lead,
+            detected_intent=detected_intent,
+            incoming_message=content_text,
+            previous_subject=payload.subject
         )
+        next_subject = reply_content["subject"]
+        next_body = reply_content["body"]
+        if not next_body or not next_body.strip():
+            next_subject, next_body = generate_reply_mock(
+                lead.get("name", "there"),
+                lead.get("company_name", "your organization"),
+                detected_intent,
+                content_text,
+                payload.subject,
+                "Standard"
+            )
+
 
         next_draft_doc = {
             "lead_id": lead_id,

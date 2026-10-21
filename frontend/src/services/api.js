@@ -1,7 +1,4 @@
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL ||
-  (import.meta.env.PROD ? 'https://email-agent-traininglobe.onrender.com/api' : '/api')
-).replace(/\/+$/, '');
+const API_BASE = '/api';
 
 function getAuthHeader() {
   const token = localStorage.getItem('traininglobe_token');
@@ -23,22 +20,30 @@ async function request(endpoint, options = {}) {
   if (res.status === 401) {
     localStorage.removeItem('traininglobe_token');
     localStorage.removeItem('traininglobe_user');
-    window.location.reload();
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.href = '/login';
+    }
     throw new Error('Session expired. Please log in again.');
   }
 
   if (res.status === 403) {
     const errorData = await res.json().catch(() => ({}));
-    const errorMsg = errorData.detail || 'Read-only access: your role cannot perform this action';
+    const errorMsg = errorData.detail || 'Access denied: You do not have permission to perform this action.';
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('global-api-forbidden', { detail: { message: errorMsg } }));
     }
-    throw new Error(errorMsg);
+    const err = new Error(errorMsg);
+    err.status = 403;
+    throw err;
   }
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.detail || errorData.message || `Request failed (${res.status})`);
+    const errorMsg = errorData.detail || errorData.message || `Request failed (${res.status})`;
+    const err = new Error(errorMsg);
+    err.status = res.status;
+    err.requestId = errorData.request_id;
+    throw err;
   }
 
   return res.json();
@@ -67,10 +72,12 @@ export const api = {
   getMetrics: () => request('/reports/metrics'),
 
   // Leads
-  listLeads: (status, search) => {
+  listLeads: (status, search, ownerId, myLeads) => {
     const params = new URLSearchParams();
-    if (status) params.append('status', status);
+    if (status && status !== 'ALL') params.append('status', status);
     if (search) params.append('search', search);
+    if (ownerId && ownerId !== 'ALL') params.append('owner_id', ownerId);
+    if (myLeads) params.append('my_leads', 'true');
     return request(`/leads?${params.toString()}`);
   },
   getLead: (id) => request(`/leads/${id}`),
@@ -97,6 +104,8 @@ export const api = {
     request(`/approvals/${draftId}/reject`, { method: 'POST', body: JSON.stringify(data) }),
   rescheduleDraft: (draftId, scheduledFor) =>
     request(`/approvals/${draftId}/reschedule`, { method: 'POST', body: JSON.stringify({ scheduled_for: scheduledFor }) }),
+  cancelAllOverdue: () =>
+    request('/approvals/cancel-all-overdue', { method: 'POST' }),
 
   // Emails & Threads
   getThread: (leadId) => request(`/emails/thread/${leadId}`),
@@ -109,7 +118,13 @@ export const api = {
   updateSettings: (data) => request('/settings', { method: 'PUT', body: JSON.stringify(data) }),
   listKnowledgeBase: () => request('/settings/knowledge-base'),
   addKnowledgeBaseItem: (data) => request('/settings/knowledge-base', { method: 'POST', body: JSON.stringify(data) }),
+  updateKnowledgeBaseItem: (id, data) => request(`/settings/knowledge-base/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteKnowledgeBaseItem: (id) => request(`/settings/knowledge-base/${id}`, { method: 'DELETE' }),
+
+  // Email Templates Library
+  getTemplates: () => request('/settings/templates'),
+  updateTemplate: (id, data) => request(`/settings/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  previewTemplate: (data) => request('/settings/templates/preview', { method: 'POST', body: JSON.stringify(data) }),
 
   // Audit Logs
   getAuditLogs: (limit = 100) => request(`/audit?limit=${limit}`),

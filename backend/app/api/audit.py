@@ -1,7 +1,7 @@
 from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, Query
 from app.core.database import get_database, serialize_doc
-from app.core.security import require_permission
+from app.core.security import get_user_scope_filter, require_permission
 
 router = APIRouter(prefix="/audit", tags=["Audit Logs"])
 
@@ -13,30 +13,10 @@ async def list_audit_logs(
 ):
     """
     List audit logs.
-    Super Admin sees all logs organization-wide.
-    Staff Admin ONLY sees entries related to leads assigned to them.
+    Super Admin and Staff Admin have identical full read visibility across the compliance ledger.
     """
     db = get_database()
-    query = {}
-
-    if current_user.get("role") != "SUPER_ADMIN":
-        # Find leads assigned to this Staff Admin
-        accessible_leads = await db.leads.find({"owner_id": current_user["id"]}, {"_id": 1}).to_list(1000)
-        lead_ids = [str(l["_id"]) for l in accessible_leads]
-
-        # Find associated emails
-        emails = await db.emails.find({"lead_id": {"$in": lead_ids}}, {"_id": 1}).to_list(5000) if lead_ids else []
-        email_ids = [str(e["_id"]) for e in emails]
-
-        query = {
-            "$or": [
-                {"lead_id": {"$in": lead_ids}},
-                {"details.lead_id": {"$in": lead_ids}},
-                {"entity_type": "LEAD", "entity_id": {"$in": lead_ids}},
-                {"entity_type": "EMAIL", "entity_id": {"$in": email_ids}},
-                {"user_id": current_user["id"]},
-            ]
-        }
+    query = get_user_scope_filter(current_user)
 
     cursor = db.audit_logs.find(query).sort("timestamp", -1).limit(limit)
     logs = await cursor.to_list(limit)

@@ -45,6 +45,7 @@ const ACTION_FILTERS = [
 export default function AuditLogs() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [actionFilter, setActionFilter] = useState('ALL');
   const [dateFilter, setDateFilter] = useState('ALL'); // ALL | TODAY | 7DAYS | 30DAYS
@@ -64,11 +65,13 @@ export default function AuditLogs() {
   const fetchLogs = async () => {
     try {
       setLoading(true);
+      setError(null);
       const data = await api.getAuditLogs(200);
       setLogs(data || []);
       setCurrentPage(1);
     } catch (err) {
       console.error('Failed to load audit logs:', err);
+      setError(err.message || "We couldn't load audit records. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -102,6 +105,12 @@ export default function AuditLogs() {
   // Helper for human-readable details summary
   const getDetailsSummary = (log) => {
     const d = log.details || {};
+    if (d.approved_by) {
+      return `Approved by ${d.approved_by}${d.subject ? ` • "${d.subject}"` : ''}`;
+    }
+    if (d.owner_name) {
+      return `Owner: ${d.owner_name}${d.subject ? ` • "${d.subject}"` : ''}`;
+    }
     if (d.to) {
       return `To ${d.to}${d.subject ? ` • "${d.subject}"` : ''}`;
     }
@@ -259,6 +268,22 @@ export default function AuditLogs() {
           <div className="flex items-center justify-center py-20 text-slate-400 text-sm">
             <RefreshCw className="h-5 w-5 animate-spin mr-2 text-indigo-600" />
             Loading compliance ledger...
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+            <div className="h-12 w-12 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-500 mb-3 shadow-xs">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-semibold text-slate-900 mb-1">Failed to load audit records</h3>
+            <p className="text-xs text-slate-500 max-w-sm mb-4 leading-relaxed">{error}</p>
+            <button
+              type="button"
+              onClick={fetchLogs}
+              className="btn-primary text-xs inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>Try Again</span>
+            </button>
           </div>
         ) : filteredLogs.length === 0 ? (
           <EmptyState

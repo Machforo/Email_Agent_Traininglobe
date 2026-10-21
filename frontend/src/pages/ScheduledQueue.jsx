@@ -20,16 +20,17 @@ import {
   formatRelativeTime,
 } from '../services/formatters';
 
-export default function ScheduledQueue() {
+export default function ScheduledQueue({ user }) {
   const { can, isReadOnly } = usePermissions();
   const [scheduled, setScheduled] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   // Modals & Dialogs
   const [rescheduleItem, setRescheduleItem] = useState(null);
   const [newDateTime, setNewDateTime] = useState('');
-  const [itemToSendNow, setItemToSendNow] = useState(null);
   const [itemToCancel, setItemToCancel] = useState(null);
+  const [showCancelAllOverdueModal, setShowCancelAllOverdueModal] = useState(false);
 
   const [actionLoading, setActionLoading] = useState(false);
   const [notification, setNotification] = useState(null);
@@ -55,8 +56,6 @@ export default function ScheduledQueue() {
                 ? new Date(item.scheduled_for).toISOString().slice(0, 16)
                 : ''
             );
-          } else if (action === 'send_now' && !isReadOnly) {
-            setItemToSendNow(item);
           } else if (action === 'cancel' && !isReadOnly) {
             setItemToCancel(item);
           }
@@ -70,27 +69,14 @@ export default function ScheduledQueue() {
   const fetchScheduled = async () => {
     try {
       setLoading(true);
+      setError(null);
       const data = await api.getScheduledEmails();
       setScheduled(data || []);
     } catch (err) {
       console.error('Failed to load scheduled queue:', err);
+      setError(err.message || "We couldn't load scheduled deliveries. Please try again.");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleConfirmSendNow = async () => {
-    if (!itemToSendNow) return;
-    try {
-      setActionLoading(true);
-      await api.approveDraft(itemToSendNow.id, true);
-      showNotification('success', 'Email dispatched immediately via Zoho Mail integration');
-      setItemToSendNow(null);
-      fetchScheduled();
-    } catch (err) {
-      showNotification('error', `Dispatch failed: ${err.message}`);
-    } finally {
-      setActionLoading(false);
     }
   };
 
@@ -131,10 +117,30 @@ export default function ScheduledQueue() {
     }
   };
 
+  const handleCancelAllOverdue = async () => {
+    try {
+      setActionLoading(true);
+      const res = await api.cancelAllOverdue();
+      showNotification('success', res.message || 'Cancelled overdue scheduled deliveries');
+      setShowCancelAllOverdueModal(false);
+      fetchScheduled();
+    } catch (err) {
+      alert(`Cancel all overdue failed: ${err.message}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const showNotification = (type, message) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), 5000);
   };
+
+  const overdueItems = scheduled.filter((item) => {
+    if (!item.scheduled_for) return false;
+    const sched = new Date(item.scheduled_for).getTime();
+    return sched <= Date.now() - 2 * 60 * 1000;
+  });
 
   return (
     <div className="space-y-6 pb-16">
@@ -159,16 +165,29 @@ export default function ScheduledQueue() {
       {/* Page Header */}
       <PageHeader
         title="Scheduled Delivery Queue"
-        subtitle="Approved emails staged for delivery. Scheduled emails are held safely and require manual release ('Send Now') by an authorized admin."
+        subtitle="Approved emails are sent automatically at the scheduled time. You can reschedule or cancel them before then."
         actions={
-          <button
-            type="button"
-            onClick={fetchScheduled}
-            className="btn-secondary text-xs"
-          >
-            <RefreshCw className="h-3.5 w-3.5 text-slate-500" />
-            <span>Refresh Queue</span>
-          </button>
+          <div className="flex items-center gap-2.5">
+            {can('emails:write') && overdueItems.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowCancelAllOverdueModal(true)}
+                disabled={actionLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition shadow-2xs"
+              >
+                <XCircle className="h-3.5 w-3.5 text-rose-600" />
+                <span>Cancel All Overdue ({overdueItems.length})</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={fetchScheduled}
+              className="btn-secondary text-xs"
+            >
+              <RefreshCw className="h-3.5 w-3.5 text-slate-500" />
+              <span>Refresh Queue</span>
+            </button>
+          </div>
         }
       />
 
@@ -179,6 +198,22 @@ export default function ScheduledQueue() {
             <RefreshCw className="h-5 w-5 animate-spin mr-2 text-indigo-600" />
             Loading scheduled messages...
           </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-16 px-4 text-center bg-white rounded-xl border border-slate-200">
+            <div className="h-12 w-12 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-500 mb-3 shadow-xs">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-semibold text-slate-900 mb-1">Failed to load scheduled queue</h3>
+            <p className="text-xs text-slate-500 max-w-sm mb-4 leading-relaxed">{error}</p>
+            <button
+              type="button"
+              onClick={fetchScheduled}
+              className="btn-primary text-xs inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>Try Again</span>
+            </button>
+          </div>
         ) : scheduled.length === 0 ? (
           <EmptyState
             icon={Clock}
@@ -188,7 +223,12 @@ export default function ScheduledQueue() {
         ) : (
           <div className="grid grid-cols-1 gap-4">
             {scheduled.map((item) => {
-              const isDue = item.scheduled_for && new Date(item.scheduled_for) <= new Date();
+              const now = Date.now();
+              const schedTime = item.scheduled_for ? new Date(item.scheduled_for).getTime() : 0;
+              const isPast = schedTime && schedTime <= now;
+              const elapsedMinutes = schedTime ? (now - schedTime) / 60000 : 0;
+              const isSendingSoon = isPast && elapsedMinutes <= 2;
+              const isOverdue = isPast && elapsedMinutes > 2;
               const relativeTimeStr = formatRelativeTime(item.scheduled_for);
               const formattedTime = formatDateTime(item.scheduled_for, true);
 
@@ -199,10 +239,21 @@ export default function ScheduledQueue() {
                 >
                   <div className="space-y-2.5 flex-1">
                     <div className="flex flex-wrap items-center gap-2.5">
-                      {isDue ? (
-                        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
-                          <CheckCircle className="h-3 w-3 text-emerald-600" />
-                          Ready to Send (Due Now)
+                      {isSendingSoon ? (
+                        <span
+                          className="inline-flex items-center gap-1.5 rounded-full border border-sky-300 bg-sky-50 px-2.5 py-0.5 text-xs font-semibold text-sky-800"
+                          title="Currently being picked up by the automated background scheduler"
+                        >
+                          <RefreshCw className="h-3 w-3 animate-spin text-sky-600" />
+                          Sending soon
+                        </span>
+                      ) : isOverdue ? (
+                        <span
+                          className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-800 cursor-help"
+                          title={item.overdue_reason || 'Scheduled delivery window has passed. Waiting for active business hours window or dispatcher retry.'}
+                        >
+                          <AlertCircle className="h-3 w-3 text-rose-600" />
+                          Overdue
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
@@ -225,9 +276,11 @@ export default function ScheduledQueue() {
                     </div>
 
                     <h3 className="text-sm font-semibold text-slate-900">{item.subject}</h3>
-                    <p className="text-xs text-slate-600 line-clamp-2 bg-slate-50 p-3 rounded-lg border border-slate-200 font-sans leading-relaxed">
-                      {item.body_text || item.body || item.body_html?.replace(/<[^>]+>/g, '')}
-                    </p>
+                    <div className="text-xs text-slate-700 whitespace-pre-wrap max-h-56 overflow-y-auto bg-slate-50 p-3.5 rounded-lg border border-slate-200 font-sans leading-relaxed">
+                      {item.body_text || item.body || item.body_html?.replace(/<[^>]+>/g, '') || (
+                        <span className="text-amber-700 italic">Empty body (flagged for review)</span>
+                      )}
+                    </div>
                   </div>
 
                   <Can permission="emails:write">
@@ -251,16 +304,6 @@ export default function ScheduledQueue() {
 
                       <button
                         type="button"
-                        onClick={() => setItemToSendNow(item)}
-                        disabled={actionLoading}
-                        className="btn-success text-xs font-semibold shadow-xs"
-                      >
-                        <Send className="h-3.5 w-3.5" />
-                        <span>Send Now</span>
-                      </button>
-
-                      <button
-                        type="button"
                         onClick={() => setItemToCancel(item)}
                         disabled={actionLoading}
                         title="Cancel scheduled delivery"
@@ -277,19 +320,6 @@ export default function ScheduledQueue() {
         )}
       </div>
 
-      {/* Confirmation Modal for Send Now */}
-      <ConfirmDialog
-        isOpen={!!itemToSendNow}
-        title="Dispatch Scheduled Email Now?"
-        message={`Are you sure you want to bypass the scheduled window and immediately dispatch this email to ${itemToSendNow?.lead_email || 'the recipient'}?`}
-        confirmText="Send Immediately"
-        cancelText="Cancel"
-        type="success"
-        loading={actionLoading}
-        onConfirm={handleConfirmSendNow}
-        onCancel={() => setItemToSendNow(null)}
-      />
-
       {/* Confirmation Modal for Cancel Delivery */}
       <ConfirmDialog
         isOpen={!!itemToCancel}
@@ -302,6 +332,21 @@ export default function ScheduledQueue() {
         onConfirm={handleConfirmCancel}
         onCancel={() => setItemToCancel(null)}
       />
+
+      {/* Confirmation Modal for Cancel All Overdue */}
+      <ConfirmDialog
+        isOpen={showCancelAllOverdueModal}
+        title="Cancel All Overdue Deliveries?"
+        message={`Are you sure you want to cancel all ${overdueItems.length} overdue scheduled emails? This action will mark them as Cancelled/Rejected and will be logged in the audit trail.`}
+        confirmText={`Cancel All (${overdueItems.length})`}
+        cancelText="Keep Scheduled"
+        type="danger"
+        loading={actionLoading}
+        onConfirm={handleCancelAllOverdue}
+        onCancel={() => setShowCancelAllOverdueModal(false)}
+      />
+
+
 
       {/* Reschedule Modal */}
       {rescheduleItem && (

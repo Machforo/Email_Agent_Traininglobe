@@ -155,6 +155,7 @@ export default function ApprovalQueue({ queue = [], onRefresh, user }) {
     }
   };
 
+
   return (
     <div className="space-y-6 pb-16">
       {/* Page Header */}
@@ -243,11 +244,32 @@ export default function ApprovalQueue({ queue = [], onRefresh, user }) {
                           <span className="text-xs text-slate-500 font-medium">{companyName}</span>
                         )}
                       </div>
-                      <p className="text-xs text-slate-500 mt-0.5">{item.lead_email}</p>
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-0.5">
+                        <span>{item.lead_email}</span>
+                        <span>•</span>
+                        <span className="font-medium text-slate-700">Lead Owner: {item.owner_name || 'Unassigned'}</span>
+                        {item.approver_name && (
+                          <>
+                            <span>•</span>
+                            <span className="text-emerald-700 font-medium">Approved by: {item.approver_name}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 self-start md:self-center">
+                  <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
+                    {draft.service_line && (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        {draft.service_line}
+                      </span>
+                    )}
+                    {draft.flagged_for_review && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300" title={draft.review_reason}>
+                        <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
+                        <span>Review Required</span>
+                      </span>
+                    )}
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
                       <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
                       <span>{confidencePct}% Grounded</span>
@@ -304,6 +326,15 @@ export default function ApprovalQueue({ queue = [], onRefresh, user }) {
 
                 {/* 3. Draft Email Content */}
                 <div className="p-6 space-y-3">
+                  {draft.flagged_for_review && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2 text-xs text-amber-900">
+                      <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-semibold">Review note: </span>
+                        <span>{draft.review_reason || 'Service line or content requires confirmation before sending.'}</span>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-1">
                       Subject Line
@@ -318,7 +349,13 @@ export default function ApprovalQueue({ queue = [], onRefresh, user }) {
                       Email Body (Strictly Grounded in Knowledge Base)
                     </span>
                     <div className="p-4 rounded-lg border border-slate-200 bg-slate-50/70 text-slate-800 font-sans text-sm leading-relaxed whitespace-pre-wrap">
-                      {draft.body}
+                      {draft.body ? (
+                        draft.body
+                      ) : (
+                        <span className="italic text-rose-600 font-medium">
+                          [Draft body is empty — click 'Regenerate longer' or 'Edit Content' to restore]
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -326,7 +363,7 @@ export default function ApprovalQueue({ queue = [], onRefresh, user }) {
                 {/* 4. Action Bar (Super Admin) or Read-Only Status Indicator (Staff Admin) */}
                 {can('approvals:write') ? (
                   <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
                         onClick={() => openEdit(item)}
@@ -336,6 +373,7 @@ export default function ApprovalQueue({ queue = [], onRefresh, user }) {
                         <Edit3 className="h-3.5 w-3.5" />
                         <span>Edit Content</span>
                       </button>
+
 
                       <button
                         type="button"

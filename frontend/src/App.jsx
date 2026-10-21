@@ -95,6 +95,14 @@ function AppContent({ user, setUser, onLogout }) {
       const action = params.get('action');
       const token = params.get('token');
 
+      // Route guard: if a Staff Admin opens a write-only URL, redirect to Dashboard with toast
+      if (isReadOnly && (action === 'reschedule' || action === 'cancel' || action === 'approve')) {
+        showToast('Read-only access: your role cannot perform write actions.', 'warning');
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setActiveTab('dashboard');
+        return;
+      }
+
       if (emailId) {
         // If link includes action token, verify it
         if (token) {
@@ -111,7 +119,7 @@ function AppContent({ user, setUser, onLogout }) {
         }
       }
     }
-  }, []);
+  }, [isReadOnly]);
 
   // Notification Popup Handlers
   const handlePopupDismiss = async (notificationId) => {
@@ -218,14 +226,13 @@ function AppContent({ user, setUser, onLogout }) {
         onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
       />
 
-      {/* Floating Pop-up Alert for Upcoming Scheduled Deliveries */}
-      {activePopupAlert && (
+      {/* Floating Pop-up Alert for Upcoming Scheduled Deliveries (Super Admin only; hidden for Staff Admin) */}
+      {!isReadOnly && activePopupAlert && (
         <ScheduledReminderAlert
           notification={activePopupAlert}
           onDismiss={handlePopupDismiss}
           onView={handlePopupView}
           onReschedule={handlePopupReschedule}
-          onSendNow={handlePopupSendNow}
           onCancelSend={handlePopupCancel}
           actionLoading={actionLoading}
         />
@@ -236,7 +243,7 @@ function AppContent({ user, setUser, onLogout }) {
         <div className="bg-sky-50 border-b border-sky-200/80 px-4 py-2 text-xs text-sky-900 flex items-center justify-center gap-2 shadow-2xs">
           <Info className="h-4 w-4 text-sky-600 shrink-0" />
           <span>
-            <strong className="font-semibold text-sky-950">View-only access:</strong> You can view your assigned leads and activity. Changes are made by a Super Admin.
+            <strong className="font-semibold text-sky-950">View-only access:</strong> you can see all leads and activity. Changes are made by a Super Admin.
           </span>
         </div>
       )}
@@ -289,7 +296,7 @@ function AppContent({ user, setUser, onLogout }) {
 
         {activeTab === 'leads' && <Leads />}
 
-        {activeTab === 'scheduled' && <ScheduledQueue />}
+        {activeTab === 'scheduled' && <ScheduledQueue user={user} />}
 
         {activeTab === 'settings' && <Settings />}
 

@@ -30,6 +30,18 @@ async def trigger_lead_pipeline(lead_doc: Dict[str, Any]):
 
     # 2. Draft first email
     draft_content = await draft_first_email(lead=lead_doc, research=research_res)
+    if not draft_content.get("body") or not draft_content.get("body").strip():
+        from app.services.ai_service import generate_first_outreach_mock
+        needs = research_res.get("likely_needs", ["practical technical training"])
+        needs_txt = needs[0] if needs else "practical technical training"
+        subj, bdy = generate_first_outreach_mock(
+            lead_doc.get("name", "there"),
+            lead_doc.get("company_name", "your company"),
+            research_res.get("summary", ""),
+            needs_txt,
+            "Standard"
+        )
+        draft_content = {"subject": subj, "body": bdy, "confidence_score": 0.95}
 
     draft_record = {
         "lead_id": lead_id,
@@ -44,6 +56,9 @@ async def trigger_lead_pipeline(lead_doc: Dict[str, Any]):
         "subject": draft_content["subject"],
         "body": draft_content["body"],
         "confidence_score": draft_content.get("confidence_score", 0.95),
+        "flagged_for_review": draft_content.get("flagged_for_review", False),
+        "review_reason": draft_content.get("review_reason"),
+        "service_line": draft_content.get("service_line"),
         "approved_by": None,
         "approved_at": None,
         "scheduled_for": None,
@@ -64,47 +79,155 @@ async def trigger_lead_pipeline(lead_doc: Dict[str, Any]):
 async def list_leads(
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = None,
+    owner_id: Optional[str] = None,
+    my_leads: Optional[bool] = None,
     skip: int = 0,
     limit: int = 100,
     current_user: Dict[str, Any] = Depends(require_permission("leads:read"))
 ):
     """
     List leads with filtering and search.
-    Enforces strict backend RBAC: Admins can ONLY view leads assigned to them.
+    Super Admin and Staff Admin have full read visibility org-wide.
+    Optional owner_id or my_leads parameters allow narrowing down.
+    Tolerant of older, partial, or malformed documents.
     """
+    if skip < 0:
+        raise HTTPException(status_code=400, detail="Invalid skip parameter: must be >= 0")
+    if limit <= 0 or limit > 1000:
+        raise HTTPException(status_code=400, detail="Invalid limit parameter: must be between 1 and 1000")
+
     db = get_database()
     query = get_user_scope_filter(current_user)
 
-    if status_filter:
-        query["status"] = status_filter
+    # Explicit Owner / My Leads narrowing
+    if my_leads:
+        current_uid = str(current_user.get("id") or current_user.get("_id") or "")
+        if ObjectId.is_valid(current_uid):
+            query["owner_id"] = {"$in": [current_uid, ObjectId(current_uid)]}
+        else:
+            query["owner_id"] = current_uid
+    elif owner_id and owner_id.strip() and owner_id.strip().upper() != "ALL":
+        clean_owner = owner_id.strip()
+        if clean_owner == "me":
+            current_uid = str(current_user.get("id") or current_user.get("_id") or "")
+            if ObjectId.is_valid(current_uid):
+                query["owner_id"] = {"$in": [current_uid, ObjectId(current_uid)]}
+            else:
+                query["owner_id"] = current_uid
+        elif ObjectId.is_valid(clean_owner):
+            query["owner_id"] = {"$in": [clean_owner, ObjectId(clean_owner)]}
+        else:
+            query["owner_id"] = clean_owner
 
-    if search:
-        regex = {"$regex": search, "$options": "i"}
+    if status_filter and status_filter.strip().upper() != "ALL":
+        query["status"] = status_filter.strip()
+
+    if search and search.strip():
+        import re
+        escaped_search = re.escape(search.strip())
+        regex = {"$regex": escaped_search, "$options": "i"}
         query["$or"] = [
             {"name": regex},
             {"email": regex},
-            {"company_name": regex}
+            {"company_name": regex},
+            {"company": regex}
         ]
 
     cursor = db.leads.find(query).sort("created_at", -1).skip(skip).limit(limit)
     leads = await cursor.to_list(limit)
 
-    # Attach owner names
-    user_ids = list({ObjectId(l["owner_id"]) for l in leads if l.get("owner_id")})
-    users_cursor = db.users.find({"_id": {"$in": user_ids}})
-    user_map = {str(u["_id"]): u.get("name", "") async for u in users_cursor}
+    # Attach owner names safely without throwing InvalidId
+    user_ids = []
+    for l in leads:
+        oid = l.get("owner_id")
+        if oid and ObjectId.is_valid(str(oid)):
+            user_ids.append(ObjectId(str(oid)))
+        appr_id = l.get("approved_by")
+        if appr_id and ObjectId.is_valid(str(appr_id)):
+            user_ids.append(ObjectId(str(appr_id)))
+
+    user_map = {}
+    if user_ids:
+        users_cursor = db.users.find({"_id": {"$in": user_ids}})
+        user_map = {str(u["_id"]): u.get("name", "") async for u in users_cursor}
 
     results = []
     for l in leads:
-        lead_dict = serialize_doc(l)
-        if lead_dict.get("owner_id"):
-            lead_dict["owner_name"] = user_map.get(lead_dict["owner_id"])
-        lead_dict["company"] = lead_dict.get("company_name") or lead_dict.get("company")
-        if lead_dict.get("name") and not lead_dict.get("first_name"):
-            parts = lead_dict["name"].split(" ")
-            lead_dict["first_name"] = parts[0]
-            lead_dict["last_name"] = " ".join(parts[1:]) if len(parts) > 1 else ""
-        results.append(lead_dict)
+        try:
+            lead_dict = serialize_doc(l)
+            if not isinstance(lead_dict, dict):
+                continue
+
+            # Ensure id string
+            if "id" not in lead_dict and "_id" in lead_dict:
+                lead_dict["id"] = str(lead_dict["_id"])
+            elif "id" not in lead_dict:
+                lead_dict["id"] = str(ObjectId())
+
+            # Company fallback
+            raw_company = (lead_dict.get("company_name") or lead_dict.get("company") or "").strip()
+            lead_dict["company_name"] = raw_company or "Unknown Company"
+            lead_dict["company"] = lead_dict["company_name"]
+
+            # Name fallback
+            raw_name = (lead_dict.get("name") or "").strip()
+            if not raw_name:
+                first = (lead_dict.get("first_name") or "").strip()
+                last = (lead_dict.get("last_name") or "").strip()
+                raw_name = f"{first} {last}".strip()
+            if not raw_name:
+                raw_email = lead_dict.get("email") or ""
+                raw_name = raw_email.split("@")[0] if "@" in raw_email else "Unknown"
+            lead_dict["name"] = raw_name or "Unknown"
+
+            if not lead_dict.get("first_name"):
+                parts = lead_dict["name"].split(" ")
+                lead_dict["first_name"] = parts[0]
+                lead_dict["last_name"] = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+            # Email fallback
+            if not lead_dict.get("email"):
+                lead_dict["email"] = "unknown@domain.com"
+
+            # Status fallback
+            lead_dict["status"] = lead_dict.get("status") or LeadStatus.NEW_LEAD.value
+
+            # Owner mapping
+            raw_owner_id = lead_dict.get("owner_id")
+            if raw_owner_id:
+                owner_id_str = str(raw_owner_id)
+                lead_dict["owner_id"] = owner_id_str
+                lead_dict["owner_name"] = user_map.get(owner_id_str) or "Unassigned"
+            else:
+                lead_dict["owner_id"] = None
+                lead_dict["owner_name"] = "Unassigned"
+
+            # Approved by mapping
+            raw_appr = lead_dict.get("approved_by")
+            if raw_appr:
+                lead_dict["approved_by"] = str(raw_appr)
+                lead_dict["approver_name"] = user_map.get(str(raw_appr)) or lead_dict.get("approver_name")
+
+            # Extra fields
+            if not isinstance(lead_dict.get("extra_fields"), dict):
+                lead_dict["extra_fields"] = {}
+
+            # Followup counts
+            try:
+                lead_dict["followup_count"] = int(lead_dict.get("followup_count") or 0)
+            except (ValueError, TypeError):
+                lead_dict["followup_count"] = 0
+
+            try:
+                lead_dict["max_followups"] = int(lead_dict.get("max_followups") or 3)
+            except (ValueError, TypeError):
+                lead_dict["max_followups"] = 3
+
+            results.append(lead_dict)
+        except Exception as item_err:
+            import logging
+            logging.getLogger(__name__).warning(f"Error processing lead item {l.get('_id')}: {item_err}")
+            continue
 
     return results
 
@@ -175,6 +298,8 @@ async def get_lead(
     lead_id: str,
     current_user: Dict[str, Any] = Depends(require_permission("leads:read"))
 ):
+    if not ObjectId.is_valid(lead_id):
+        raise HTTPException(status_code=404, detail="Lead not found or access denied")
     db = get_database()
     scope = get_user_scope_filter(current_user)
     scope["_id"] = ObjectId(lead_id)
@@ -184,8 +309,33 @@ async def get_lead(
         raise HTTPException(status_code=404, detail="Lead not found or access denied")
 
     lead_data = serialize_doc(lead)
-    if lead_data.get("owner_id"):
-        owner = await db.users.find_one({"_id": ObjectId(lead_data["owner_id"])})
+    raw_company = (lead_data.get("company_name") or lead_data.get("company") or "").strip()
+    lead_data["company_name"] = raw_company or "Unknown Company"
+    lead_data["company"] = lead_data["company_name"]
+
+    raw_name = (lead_data.get("name") or "").strip()
+    if not raw_name:
+        first = (lead_data.get("first_name") or "").strip()
+        last = (lead_data.get("last_name") or "").strip()
+        raw_name = f"{first} {last}".strip()
+    if not raw_name:
+        raw_email = lead_data.get("email") or ""
+        raw_name = raw_email.split("@")[0] if "@" in raw_email else "Unknown"
+    lead_data["name"] = raw_name or "Unknown"
+
+    if not lead_data.get("first_name"):
+        parts = lead_data["name"].split(" ")
+        lead_data["first_name"] = parts[0]
+        lead_data["last_name"] = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+    if not lead_data.get("email"):
+        lead_data["email"] = "unknown@domain.com"
+
+    lead_data["status"] = lead_data.get("status") or LeadStatus.NEW_LEAD.value
+
+    raw_owner_id = lead_data.get("owner_id")
+    if raw_owner_id and ObjectId.is_valid(str(raw_owner_id)):
+        owner = await db.users.find_one({"_id": ObjectId(str(raw_owner_id))})
         if owner:
             lead_data["owner_name"] = owner.get("name")
 

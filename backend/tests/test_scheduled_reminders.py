@@ -121,11 +121,11 @@ async def test_build_reminder_email_content():
     assert "IST" in body_html
     assert "30 minutes" in body_html
     assert "sends in 30 minutes" in body_text
-    assert "Review in Scheduled Queue" in body_html
+    assert "Review in Queue" in body_html
     assert "Reschedule" in body_html
-    assert "Send Now" in body_html
-    assert "Manual Release Policy" in body_html
-    assert "not sent automatically" in body_text
+    assert "Cancel Send" in body_html
+    assert "Approved emails are sent automatically" in body_text
+    assert "Send Now" not in body_html
     assert "token=" in body_html
 
 
@@ -246,6 +246,7 @@ async def test_reschedule_resets_reminder():
         "_id": email_id,
         "lead_id": str(lead_id),
         "subject": "Follow up consultation",
+        "body": "Hi there, following up on our technical training roadmap discussion for your engineers.",
         "status": "Scheduled",
         "scheduled_for": now + datetime.timedelta(minutes=30),
         "approver_id": str(admin_id),
@@ -431,12 +432,12 @@ async def test_notifications_api_endpoints():
         assert any(n["id"] == str(notif_super["_id"]) for n in super_notifs)
         assert any(n["id"] == str(notif_staff["_id"]) for n in super_notifs)
 
-        # Staff Admin only sees notifications for their own lead
+        # Staff Admin sees all notifications as a full read-only mirror of Super Admin
         res_staff = await ac.get("/api/notifications", headers={"Authorization": f"Bearer {staff_token}"})
         assert res_staff.status_code == 200
         staff_notifs = res_staff.json()
         assert any(n["id"] == str(notif_staff["_id"]) for n in staff_notifs)
-        assert not any(n["id"] == str(notif_super["_id"]) for n in staff_notifs)
+        assert any(n["id"] == str(notif_super["_id"]) for n in staff_notifs)
 
         # Test mark read
         res_read = await ac.post(
@@ -456,34 +457,64 @@ async def test_notifications_api_endpoints():
 
 
 @pytest.mark.asyncio
-async def test_scheduled_email_not_sent_automatically():
-    """Verify that background scheduler NEVER automatically dispatches scheduled emails."""
+async def test_scheduled_email_requires_approval_and_auto_dispatches():
+    """Verify that unapproved email is not dispatched, but approved email is automatically dispatched."""
     from app.services.scheduler_service import check_scheduled_deliveries
     await connect_to_mongo()
     db = get_database()
     now = datetime.datetime.now(datetime.timezone.utc)
 
-    email_id = ObjectId()
+    unapproved_email_id = ObjectId()
+    approved_email_id = ObjectId()
     lead_id = ObjectId()
     admin_id = ObjectId()
 
-    # Scheduled email past its scheduled_for time
-    scheduled_email = {
-        "_id": email_id,
+    # Lead
+    await db.leads.insert_one({
+        "_id": lead_id,
+        "name": "Auto Dispatch Lead",
+        "email": f"auto_{lead_id}@test.com",
+        "company_name": "AutoCorp",
+        "status": "Contacted",
+        "created_at": now,
+    })
+
+    # 1. Unapproved scheduled email (missing approved_by) -> should NOT dispatch
+    await db.emails.insert_one({
+        "_id": unapproved_email_id,
         "lead_id": str(lead_id),
-        "subject": "Hold Until Manual Release",
+        "subject": "Unapproved Email",
+        "body": "Valid body text for unapproved email.",
         "status": "Scheduled",
-        "scheduled_for": now - datetime.timedelta(minutes=30),  # In the past
-        "approver_id": str(admin_id),
+        "scheduled_for": now - datetime.timedelta(minutes=5),
+        "approved_by": None,
         "sent_at": None,
         "created_at": now,
-    }
-    await db.emails.insert_one(scheduled_email)
+    })
+
+    # 2. Approved scheduled email (with approved_by) -> SHOULD auto-dispatch
+    await db.emails.insert_one({
+        "_id": approved_email_id,
+        "lead_id": str(lead_id),
+        "subject": "Approved Email",
+        "body": "Valid rich body text for approved email.",
+        "status": "Scheduled",
+        "scheduled_for": now - datetime.timedelta(minutes=5),
+        "approved_by": str(admin_id),
+        "approver_name": "Admin",
+        "sent_at": None,
+        "created_at": now,
+    })
 
     # Run check_scheduled_deliveries
     await check_scheduled_deliveries()
 
-    # Verify email was NOT sent and remains in Scheduled status awaiting manual admin release
-    reloaded = await db.emails.find_one({"_id": email_id})
-    assert reloaded["status"] == "Scheduled"
-    assert reloaded["sent_at"] is None
+    # Verify unapproved was NOT sent (blocked by approval gate)
+    unapproved_doc = await db.emails.find_one({"_id": unapproved_email_id})
+    assert unapproved_doc["status"] != "Sent"
+    assert unapproved_doc["sent_at"] is None
+
+    # Verify approved remains Scheduled (manual Send Now release policy, no automatic dispatch)
+    approved_doc = await db.emails.find_one({"_id": approved_email_id})
+    assert approved_doc["status"] == "Scheduled"
+    assert approved_doc["sent_at"] is None

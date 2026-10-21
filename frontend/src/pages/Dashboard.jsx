@@ -32,7 +32,6 @@ export default function Dashboard({ metrics, onNavigateTab, user }) {
   const [scheduledDeliveries, setScheduledDeliveries] = useState([]);
   const [loadingDeliveries, setLoadingDeliveries] = useState(false);
   const [deliveryActionLoading, setDeliveryActionLoading] = useState(false);
-  const [itemToSendNow, setItemToSendNow] = useState(null);
   const [itemToCancel, setItemToCancel] = useState(null);
   const [rescheduleItem, setRescheduleItem] = useState(null);
   const [newDateTime, setNewDateTime] = useState('');
@@ -59,21 +58,6 @@ export default function Dashboard({ metrics, onNavigateTab, user }) {
   const showToast = (type, message) => {
     setToastMsg({ type, message });
     setTimeout(() => setToastMsg(null), 5000);
-  };
-
-  const handleConfirmSendNow = async () => {
-    if (!itemToSendNow) return;
-    try {
-      setDeliveryActionLoading(true);
-      await api.approveDraft(itemToSendNow.id, true);
-      showToast('success', 'Email dispatched immediately via Zoho Mail');
-      setItemToSendNow(null);
-      fetchUpcomingDeliveries();
-    } catch (err) {
-      showToast('error', `Dispatch failed: ${err.message}`);
-    } finally {
-      setDeliveryActionLoading(false);
-    }
   };
 
   const handleRescheduleSubmit = async (e) => {
@@ -318,7 +302,7 @@ export default function Dashboard({ metrics, onNavigateTab, user }) {
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Approved emails held for release. Scheduled outreach requires explicit admin release ('Send Now') before dispatch.
+                Approved emails are sent automatically at the scheduled time. You can reschedule or cancel them before then.
               </p>
             </div>
           </div>
@@ -357,6 +341,8 @@ export default function Dashboard({ metrics, onNavigateTab, user }) {
             {next24hDeliveries.slice(0, 5).map((item) => {
               const countdown = formatCountdown(item.scheduled_for);
               const formattedTime = formatDateTime(item.scheduled_for, true);
+              const isPastTime = item.scheduled_for && new Date(item.scheduled_for) <= new Date();
+              const isSendingSoon = isPastTime && (new Date() - new Date(item.scheduled_for)) < 120000;
 
               return (
                 <div
@@ -365,11 +351,24 @@ export default function Dashboard({ metrics, onNavigateTab, user }) {
                 >
                   <div className="space-y-1.5 flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      {countdown === 'Due now' ? (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
-                          <CheckCircle className="h-3 w-3 text-emerald-600" />
-                          Ready to Send
-                        </span>
+                      {isPastTime ? (
+                        isSendingSoon ? (
+                          <span
+                            title="Scheduled for automated background dispatch"
+                            className="inline-flex items-center gap-1 rounded-full border border-sky-300 bg-sky-50 px-2.5 py-0.5 text-xs font-semibold text-sky-800 cursor-help"
+                          >
+                            <Clock className="h-3 w-3 text-sky-600 animate-pulse" />
+                            Sending soon
+                          </span>
+                        ) : (
+                          <span
+                            title={item.overdue_reason || "Scheduled delivery time has elapsed; awaiting automated retry"}
+                            className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-800 cursor-help"
+                          >
+                            <AlertCircle className="h-3 w-3 text-rose-600" />
+                            Overdue
+                          </span>
+                        )
                       ) : (
                         <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
                           <Clock className="h-3 w-3 text-amber-600" />
@@ -418,16 +417,6 @@ export default function Dashboard({ metrics, onNavigateTab, user }) {
 
                       <button
                         type="button"
-                        onClick={() => setItemToSendNow(item)}
-                        disabled={deliveryActionLoading}
-                        className="btn-success text-xs py-1.5 px-3 font-semibold shadow-xs"
-                      >
-                        <Send className="h-3.5 w-3.5" />
-                        <span>Send Now</span>
-                      </button>
-
-                      <button
-                        type="button"
                         onClick={() => setItemToCancel(item)}
                         disabled={deliveryActionLoading}
                         title="Cancel scheduled delivery"
@@ -447,19 +436,6 @@ export default function Dashboard({ metrics, onNavigateTab, user }) {
           </div>
         )}
       </div>
-
-      {/* Confirmation Dialogs and Reschedule Modal */}
-      <ConfirmDialog
-        isOpen={!!itemToSendNow}
-        title="Send Scheduled Email Immediately?"
-        message={`Are you sure you want to release this email to ${itemToSendNow?.lead_email || 'the recipient'} immediately, bypassing the scheduled countdown?`}
-        confirmText="Send Now"
-        cancelText="Cancel"
-        type="success"
-        loading={deliveryActionLoading}
-        onConfirm={handleConfirmSendNow}
-        onCancel={() => setItemToSendNow(null)}
-      />
 
       <ConfirmDialog
         isOpen={!!itemToCancel}
