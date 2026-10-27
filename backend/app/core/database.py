@@ -9,8 +9,19 @@ db: AsyncIOMotorDatabase = None
 
 async def connect_to_mongo():
     global client, db
-    client = AsyncIOMotorClient(settings.MONGO_URI, serverSelectionTimeoutMS=8000)
-    db = client[settings.MONGO_DB_NAME]
+    uri = settings.MONGO_URI
+    try:
+        client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=4000)
+        # Test connection
+        await client.admin.command("ping")
+        db = client[settings.MONGO_DB_NAME]
+    except Exception as exc:
+        print(f"[WARN] Failed to connect to primary MongoDB at {uri}: {exc}")
+        print("[INFO] Falling back to local MongoDB at mongodb://localhost:27017...")
+        client = AsyncIOMotorClient("mongodb://localhost:27017", serverSelectionTimeoutMS=3000)
+        await client.admin.command("ping")
+        db = client[settings.MONGO_DB_NAME]
+        print("[SUCCESS] Connected to local MongoDB successfully.")
 
     # Initialize collections and indexes
     await db.users.create_index("email", unique=True)

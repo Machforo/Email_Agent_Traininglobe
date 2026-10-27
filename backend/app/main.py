@@ -82,12 +82,14 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     )
 
 
+from fastapi.encoders import jsonable_encoder
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
         content={
-            "detail": exc.errors(),
+            "detail": jsonable_encoder(exc.errors()),
             "message": "Invalid request parameters"
         }
     )
