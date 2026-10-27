@@ -1,6 +1,7 @@
 from typing import Any, Dict
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+import certifi
 from app.core.config import settings
 
 client: AsyncIOMotorClient = None
@@ -10,11 +11,18 @@ db: AsyncIOMotorDatabase = None
 async def connect_to_mongo():
     global client, db
     uri = settings.MONGO_URI
+    kwargs = {"serverSelectionTimeoutMS": 4000}
+    if "mongodb+srv://" in uri or "tls=true" in uri.lower() or "ssl=true" in uri.lower():
+        try:
+            kwargs["tlsCAFile"] = certifi.where()
+        except Exception:
+            pass
     try:
-        client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=4000)
+        client = AsyncIOMotorClient(uri, **kwargs)
         # Test connection
         await client.admin.command("ping")
         db = client[settings.MONGO_DB_NAME]
+        print(f"[SUCCESS] Connected to primary MongoDB successfully: {settings.MONGO_DB_NAME}")
     except Exception as exc:
         print(f"[WARN] Failed to connect to primary MongoDB at {uri}: {exc}")
         print("[INFO] Falling back to local MongoDB at mongodb://localhost:27017...")
